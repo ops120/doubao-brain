@@ -46,7 +46,7 @@
 | 开关 | 说明 | 怎么用 |
 | --- | --- | --- |
 | **多模型可选** | 快速（默认）/ 2.1 Turbo | `--model "2.1 Turbo"` |
-| **协作循环** | 规划 / 执行 / 复核的迭代协议 | `--protocol INIT\|EXECUTED` |
+| **协作循环** | 规划 / 执行 / 复核的迭代协议 | `--protocol INIT\|EXECUTED`（完整取值见命令面） |
 
 > ⚠️ **产物生成类任务必须显式指定 `--capability`**。
 > 不切能力时，豆包对「生成一张图」这类请求**只会回一段文字描述**，页面上不会真正渲染产物。
@@ -87,7 +87,15 @@ git clone https://github.com/ops120/doubao-brain ~/.codex/skills/doubao-brain   
 git clone https://github.com/ops120/doubao-brain ~/.agents/skills/doubao-brain     # 通用 / ZCode
 ```
 
-> Windows 的 cmd / PowerShell 不展开 `~`，请改用 `%USERPROFILE%` / `$env:USERPROFILE` 这类绝对路径。
+> Windows 的 cmd / PowerShell 不展开 `~`，请改用绝对路径，例如：
+> ```bat
+> :: cmd
+> git clone https://github.com/ops120/doubao-brain "%USERPROFILE%\.agents\skills\doubao-brain"
+> ```
+> ```powershell
+> # PowerShell
+> git clone https://github.com/ops120/doubao-brain "$env:USERPROFILE\.agents\skills\doubao-brain"
+> ```
 > 目标目录已存在时 `git clone` 会失败：改用 `git -C <目录> pull` 更新，或先删掉旧目录。
 
 装好后对 agent 说：**「用 doubao-brain 完成首次配置」**。
@@ -203,7 +211,7 @@ dbb ask --prompt "一只熊猫在竹林里啃竹子，阳光斑驳" --capability
 ## 命令面
 
 `--json`（机器可读）与 `--debug`（保存页面 HTML）为全局选项；
-`--keep-open`（保留浏览器窗口）只对会打开浏览器的命令（`ask` / `doctor` / `setup` / `login` / `list-models`）有意义。
+`--keep-open`（保留浏览器窗口）只对会打开浏览器的命令（`ask` / `doctor --deep` / `setup` / `login` / `list-models`）有意义。
 各命令的完整参数以 `--help` 为准。示例使用 `dbb` 简写，未配别名时请展开为 `node "$SKILL_ROOT/scripts/dbb/cli.mjs"`。
 
 | 命令 | 作用 | 关键参数 |
@@ -281,6 +289,8 @@ dbb ask --prompt "一只熊猫在竹林里啃竹子，阳光斑驳" --capability
 - 二者不一致时必须标注；能力另由 `capability` / `capabilityRequested` 表示
 - `modes.capability` —— 实际生效的能力（生成类任务的关键字段）。⚠️ 若未显式传 `--capability`，
   这里可能是**上一次残留**的能力栏状态，不代表本次请求
+- `modes.capabilityRequested` —— **仅指本次显式请求的能力**（`--capability` 的值），未指定时为 `null`；
+  判断"本次是否显式要求某能力"请以这个字段为准
 - `files[]` —— **已下载到本地的产物**绝对路径，带 `kind` 与 `contentType`。
   当前产物提取覆盖 **`kind: "video" | "image"`**；音乐 / 播客等音频类产物是否落盘以页面实际为准，
   必要时用 `--no-download` 关闭提取后自行在页面保存
@@ -331,7 +341,7 @@ dbb thread status --json   # 查进度（checkpoint 自动落盘）
 | `THREAD_LOST` | 会话 404 | 新会话重问（或 HANDOFF） |
 | `LOCKED` | 浏览器被占用 | 等，或问用户 |
 | `DEPENDENCY_MISSING` | 依赖缺失 | `setup` 自愈 |
-| `SENSITIVE_BLOCKED` | 闸门拦截 | 移除敏感内容；确需发送须用户明确同意后加 `--allow-sensitive`（仅关闭脱敏，**私钥块仍拒绝**） |
+| `SENSITIVE_BLOCKED` | 闸门拦截 | 移除敏感内容；确需发送须用户明确同意后加 `--allow-sensitive`——它会**关闭全部脱敏**（密钥形状、家目录路径等按原文发往站点），仅保留私钥块仍拒绝，请务必确认用户知情 |
 | `PAYLOAD_TOO_LARGE` | 正文超 50 KB | 摘要或分片；`--allow-large` 放宽到 200 KB |
 
 完整表（含对用户话术）见 [references/failure-taxonomy.md](references/failure-taxonomy.md)。
@@ -463,10 +473,11 @@ Linux    $XDG_STATE_HOME/doubao-brain/   （该变量未设置时通常为 ~/.lo
 唯一需要改的地方是 **`scripts/dbb/src/site.mjs`**：
 
 ```bash
-# 在 skill 根目录执行（<skill-root> 换成实际安装路径）
+# 在 skill 根目录执行
 node "$SKILL_ROOT/scripts/dbb/cli.mjs" doctor --deep --html --json   # 定位漂移
 # 改 scripts/dbb/src/site.mjs（选择器集中在此，注意用前缀匹配）
-node "$SKILL_ROOT/scripts/dbb/tests/sanitize.test.mjs"               # 跑单测
+node "$SKILL_ROOT/scripts/dbb/cli.mjs" doctor --deep --json          # 改完必须重跑，确认探测通过
+node "$SKILL_ROOT/scripts/dbb/tests/sanitize.test.mjs"               # 仅覆盖脱敏/限额，与选择器无关
 ```
 
 ## 边界
