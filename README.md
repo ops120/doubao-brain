@@ -50,7 +50,9 @@
 | **协作循环** | 规划 / 执行 / 复核的迭代协议 | `--protocol INIT\|EXECUTED`（完整取值见命令面） |
 
 > ⚠️ **产物生成类任务必须显式指定 `--capability`**。
-> 不切能力时，豆包对「生成一张图」这类请求**只会回一段文字描述**，页面上不会真正渲染产物。
+> 不切能力时（能力栏处于默认文本模式），豆包对「生成一张图」这类请求**只会回一段文字描述**，
+> 页面上不会真正渲染产物。**能力栏状态会在会话间残留**，所以生成类任务务必每次显式传 `--capability`，
+> 不要依赖上一次的状态或"不传就能出图"。
 > 这是本项目开发中验证过的坑，详见 [原理与已知坑](#原理与已知坑)。
 
 **能力分三类**（行为不同）：
@@ -70,7 +72,7 @@
 
 - **Node.js ≥ 20**，含 npm —— 首次配置要把 `playwright-core` 装到状态目录
 - 系统已装 **Chrome / Edge / Brave / Chromium** 任一（自动探测，不下载 Chromium）
-- 能访问 `doubao.com` 的**浏览器**
+- 能访问 `doubao.com` 的**浏览器**（使用阶段）；安装阶段 Node/npm 还需能访问 **npm registry**（装 `playwright-core`，受限网络请配镜像）
 - 一个豆包账号（**无需 API key**）
 - **需要图形界面**：首次配置要打开有头浏览器请你本人登录，之后**每次问答也会真实打开浏览器窗口**（问完自动关闭），纯 SSH / 容器环境无法使用
 
@@ -176,7 +178,7 @@ node "$SKILL_ROOT/scripts/dbb/cli.mjs" ask --prompt "总结这份文档" --attac
 ### 图片生成
 
 ```bash
-dbb ask --prompt "一只柴犬坐在樱花树下，水彩插画风格" --capability "图像生成" --thread new --json
+node "$SKILL_ROOT/scripts/dbb/cli.mjs" ask \n  --prompt "一只柴犬坐在樱花树下，水彩插画风格" --capability "图像生成" --thread new --json
 ```
 
 - 实测约 **30 秒**完成，一次返回 **4 张 2048×2048** 原图（每张 5–7 MB）
@@ -185,13 +187,13 @@ dbb ask --prompt "一只柴犬坐在樱花树下，水彩插画风格" --capabil
 ### 视频生成（异步 + 参数确认）
 
 ```bash
-dbb ask --prompt "一只熊猫在竹林里啃竹子，阳光斑驳" --capability "视频生成" --timeout 900000 --json
+node "$SKILL_ROOT/scripts/dbb/cli.mjs" ask \n  --prompt "一只熊猫在竹林里啃竹子，阳光斑驳" --capability "视频生成" --thread new --timeout 900000 --json
 ```
 
 视频走的是**六步流程**（CLI 已全自动处理），可归纳为：能力切换 → 发送提示词 → 参数确认 → 异步受理 → 产物推送 → 下载：
 
 ```
-① 切换能力「视频生成」        → 出现参数面板（模型 Seedance 2.0 Mini + 时长）
+① 切换能力「视频生成」        → 出现参数面板（可见模型 Seedance 2.0 Mini、时长等）
 ② 发送提示词
 ③ 豆包回复「请先确认以下参数」  → CLI 读取并自动回复「确认，开始生成」
    （列出模型/时长/比例/创作方向/声音/画面文字 6 项）
@@ -310,14 +312,14 @@ dbb ask --prompt "一只熊猫在竹林里啃竹子，阳光斑驳" --capability
 **执行权始终在本地 agent 手里**。示例使用 `dbb` 简写，未配别名时请展开为全路径。
 
 ```bash
-dbb ask --protocol INIT --task dbb_f81a --iteration 0 --prompt-file goal.txt --json
+node "$SKILL_ROOT/scripts/dbb/cli.mjs" ask --protocol INIT --task dbb_f81a --iteration 0 --prompt-file goal.txt --json
 #   → protocol.reply.state：PLAN = 拿到方案 | BLOCKED = 停下问用户
 
-dbb ask --protocol EXECUTED --iteration 1 --prompt-file report.txt --json
+node "$SKILL_ROOT/scripts/dbb/cli.mjs" ask --protocol EXECUTED --iteration 1 --prompt-file report.txt --json
 #   → DONE = 结束 | PLAN = 还有下一轮 | BLOCKED = 停下
 #   --task / --iteration 省略时会自动沿用工作区 session 里的值
 
-dbb thread status --json   # 查进度（checkpoint 自动落盘）
+node "$SKILL_ROOT/scripts/dbb/cli.mjs" thread status --json   # 查进度（checkpoint 自动落盘）
 ```
 
 - 信封由 CLI 自动封装，回复状态由代码解析
@@ -374,7 +376,7 @@ Linux    $XDG_STATE_HOME/doubao-brain/   （该变量未设置时通常为 ~/.lo
 | `threads/<workspaceId>.json` | 工作区级线程与检查点 |
 | `outputs/<workspaceId>.jsonl` | 审计：每次问答一行元数据 |
 | `logs/dbb.log` | 脱敏日志 |
-| `debug/` | 仅 `--debug` 或失败时保存的页面截图与 HTML —— ⚠️ **可能含回答正文与你的输入，未脱敏**，排障后建议删除；**不要直接上传到公开 issue** |
+| `debug/` | `--debug`、`doctor --html` **或失败时自动**保存的页面截图与 HTML（含输入与回答原文，未脱敏）—— ⚠️ **可能含回答正文与你的输入，未脱敏**，排障后建议删除；**不要直接上传到公开 issue** |
 
 **隐私要点**：
 
