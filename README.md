@@ -56,8 +56,11 @@
 
 | 类型 | 能力 | 是否需要参数确认 | 是否产出文件 |
 | --- | --- | --- | --- |
-| **产物生成**（必须显式 `--capability`） | 图像生成 / 视频生成 / 音乐生成 / AI 播客 / 录音转写 | 视频必现，其余视情况 | ✓ 下载到 `files[]` |
+| **产物生成**（必须显式 `--capability`） | 图像生成 / 视频生成 / 音乐生成 / AI 播客 / 录音转写 | 视频必现，其余视情况 | ✓ 下载到 `files[]`（录音转写可为文本文件） |
 | **文本模式** | 帮我写作 | 通常不需要 | ✗ 只回文本 |
+
+> 代码里的判定：`GENERATIVE = /图像生成|视频生成|音乐生成|AI 播客|录音转写/` 会走产物提取流程；
+> `帮我写作` 不在其中。录音转写的产物形态取决于豆包返回（文本或文件），以 `files[]` 实际内容为准。
 
 ## 安装
 
@@ -75,6 +78,8 @@
 
 ```bash
 mkdir -p ~/.claude/skills ~/.codex/skills ~/.agents/skills   # 已存在则无副作用
+# Windows cmd:  mkdir "%USERPROFILE%\.claude\skills"
+# PowerShell:   mkdir "$env:USERPROFILE\.claude\skills" -Force
 
 # 三条命令按你的宿主任选其一，不要全都执行
 git clone https://github.com/ops120/doubao-brain ~/.claude/skills/doubao-brain     # Claude Code
@@ -82,7 +87,8 @@ git clone https://github.com/ops120/doubao-brain ~/.codex/skills/doubao-brain   
 git clone https://github.com/ops120/doubao-brain ~/.agents/skills/doubao-brain     # 通用 / ZCode
 ```
 
-> Windows 的 cmd / PowerShell 不展开 `~`，请改用 `%USERPROFILE%\.claude\skills\...` 这类绝对路径。
+> Windows 的 cmd / PowerShell 不展开 `~`，请改用 `%USERPROFILE%` / `$env:USERPROFILE` 这类绝对路径。
+> 目标目录已存在时 `git clone` 会失败：改用 `git -C <目录> pull` 更新，或先删掉旧目录。
 
 装好后对 agent 说：**「用 doubao-brain 完成首次配置」**。
 
@@ -166,7 +172,7 @@ dbb ask --prompt "一只柴犬坐在樱花树下，水彩插画风格" --capabil
 dbb ask --prompt "一只熊猫在竹林里啃竹子，阳光斑驳" --capability "视频生成" --timeout 900000 --json
 ```
 
-视频走的是**三阶段流程**，CLI 已全自动处理：
+视频走的是**六步流程**（CLI 已全自动处理），可归纳为三个阶段：文字受理 → 参数确认 → 产物推送：
 
 ```
 ① 切换能力「视频生成」        → 出现参数面板（模型 Seedance 2.0 Mini + 时长）
@@ -200,7 +206,7 @@ dbb ask --prompt "一只熊猫在竹林里啃竹子，阳光斑驳" --capability
 | `login` | 重新登录 | `--timeout <ms>` |
 | `logout` | 清除登录态（清 `profile/` 与 `storage-state.json`） | — |
 | `doctor` | 体检 | `--deep`（真机探测页面/cookie/模型选择器）、`--html` |
-| `ask` | 提问 / 生成 | `--prompt` / `--prompt-file`、**`--capability`**、`--model`、`--attach`、`--thread`、`--auto-confirm` / `--no-auto-confirm`、`--no-download`、`--protocol <状态>`、`--task <id>`、`--iteration <n>`、`--timeout`、`--allow-sensitive`、`--allow-large` |
+| `ask` | 提问 / 生成 | `--prompt` / `--prompt-file`、**`--capability`**、`--model`、`--attach`、`--thread new`（省略则复用当前线程）、`--auto-confirm` / `--no-auto-confirm`、`--no-download`、`--protocol <状态>`、`--task <id>`、`--iteration <n>`、`--timeout`、`--allow-sensitive`、`--allow-large` |
 | `list-models` | 列出可用模型与能力栏 | — |
 | `thread` | 线程管理 | `status` / `use <url>` / `new` |
 | `session` | 工作区级线程与检查点 | `get` / `set --protocol-state --waiting-for --next-step ...` |
@@ -218,9 +224,13 @@ dbb ask --prompt "一只熊猫在竹林里啃竹子，阳光斑驳" --capability
 | 参数 | 默认 | 说明 |
 | --- | --- | --- |
 | `--capability <名称>` | 无 | **产物生成类必填**：`图像生成` / `视频生成` / `音乐生成` / `AI 播客` / `录音转写`（`帮我写作` 为文本模式，可选） |
-| `--auto-confirm` | `true` | 自动读取并回复豆包的参数确认。关闭方式：`--no-auto-confirm` 或 `--auto-confirm=false`。⚠️ 自动确认会一并确认额度消耗，高风险场景建议关闭并由人工确认 |
+| `--auto-confirm` | `true` | 自动读取并回复豆包的参数确认。关闭方式：`--no-auto-confirm`（也支持 `--auto-confirm=false`）。⚠️ 自动确认会一并确认额度消耗，高风险场景建议关闭并由人工确认 |
 | `--no-download` | `false` | **完全跳过产物提取**：`files[]` 为空、`artifacts` 不报告（调试用） |
 | `--timeout <ms>` | `300000` | 视频建议 ≥ `900000` |
+
+> **视频模型不由 `--model` 控制**：`--model` 只切换对话模型（快速 / 2.1 Turbo）；
+> 视频的生成模型（实测为 Seedance 2.0 Mini）由页面参数面板决定，CLI 不提供指定参数，
+> 会自动读取并确认面板列出的参数。
 
 ### doctor 检查项
 
@@ -281,7 +291,7 @@ dbb ask --prompt "一只熊猫在竹林里啃竹子，阳光斑驳" --capability
 
 ```bash
 dbb ask --protocol INIT --task dbb_f81a --iteration 0 --prompt-file goal.txt --json
-#   → protocol.reply：PLAN = 拿到方案 | BLOCKED = 停下问用户
+#   → protocol.reply.state：PLAN = 拿到方案 | BLOCKED = 停下问用户
 
 dbb ask --protocol EXECUTED --iteration 1 --prompt-file report.txt --json
 #   → DONE = 结束 | PLAN = 还有下一轮 | BLOCKED = 停下
@@ -293,7 +303,9 @@ dbb thread status --json   # 查进度（checkpoint 自动落盘）
 - 信封由 CLI 自动封装，回复状态由代码解析
 - 建议同一任务不超过 12 轮，到顶暂停问用户（这是给 agent 的使用约定，不是 CLI 参数）
 - 线程丢失 → 依据 checkpoint 发 HANDOFF，**不粘贴日志或 diff**
-- 协议模式下返回值会多一个 `protocol` 字段（`sent` / `reply` / `taskId` / `iteration`），
+- 协议模式下返回值会多一个 `protocol` 字段：
+  `{ sent, taskId, iteration, reply }`，其中 `reply` 是对象 `{ state, taskId, iteration }`
+  （`state` 取 `PLAN` / `DONE` / `BLOCKED`，无协议回复时为 `null`），
   详见 [references/protocol.md](references/protocol.md)
 
 ## 失败处理
@@ -311,7 +323,7 @@ dbb thread status --json   # 查进度（checkpoint 自动落盘）
 | `THREAD_LOST` | 会话 404 | 新会话重问（或 HANDOFF） |
 | `LOCKED` | 浏览器被占用 | 等，或问用户 |
 | `DEPENDENCY_MISSING` | 依赖缺失 | `setup` 自愈 |
-| `SENSITIVE_BLOCKED` | 闸门拦截 | 移除敏感内容；确需发送要用户明确同意 |
+| `SENSITIVE_BLOCKED` | 闸门拦截 | 移除敏感内容；确需发送须用户明确同意后加 `--allow-sensitive`（仅关闭脱敏，**私钥块仍拒绝**） |
 | `PAYLOAD_TOO_LARGE` | 正文超 50 KB | 摘要或分片；`--allow-large` 放宽到 200 KB |
 
 完整表（含对用户话术）见 [references/failure-taxonomy.md](references/failure-taxonomy.md)。
@@ -461,6 +473,8 @@ node "<skill-root>/scripts/dbb/tests/sanitize.test.mjs"               # 跑单�
 - **消耗每日额度**：视频生成会提示"本次生成将消耗每日免费额度"；
   `--auto-confirm` 默认会自动确认这一步，介意的话用 `--no-auto-confirm`。
 - **合规风险**：自动化驱动网页版可能违反平台条款，存在限流/验证/封号风险，详见文首警告。
+- **登录态**：本项目实测登录可长期复用（字节系 cookie 带 `Expires`）；
+  实际有效期取决于平台策略，服务端过期或风控时仍需重新登录。
 
 ## 项目结构
 
@@ -473,7 +487,7 @@ references/
   site-map.md           站点交互地图（含能力栏 / 参数确认 / 异步推送 / 提取三坑）
   protocol.md           [DBB] 协作协议
 scripts/dbb/
-  cli.mjs               命令面 + JSON 契约 + 三阶段流程
+  cli.mjs               命令面 + JSON 契约 + 生成类六步流程
   src/browser.mjs       浏览器探测 + 持久化 + cookie 登录判定
   src/site.mjs          站点层（能力切换、参数确认、产物提取与下载）
   src/sanitize.mjs      发送前确定性净化闸门
