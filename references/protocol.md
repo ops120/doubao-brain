@@ -51,7 +51,7 @@ GOAL:
 
 ## 限额与断点
 
-- 迭代上限默认 12；到顶暂停问用户。
+- 建议单个任务不超过 12 轮；到顶暂停问用户（这是给 agent 的使用约定，不是 CLI 参数）。
 - 进度写进工作区 session（`dbb session set`）：`protocolState / waitingFor / nextStep / knownIssues`（有长度上限）。
 - 会话丢失 → 依据 session 生成 HANDOFF 简报（目标 / 进度 / 当前状态 / 已知问题 / 下一步），**不粘贴日志或 diff**。
 

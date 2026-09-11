@@ -4,9 +4,13 @@
 不需要 API key，不做逆向代理 —— 只驱动官方网页。
 
 - 由本地确定性 CLI（`dbb`）驱动，Agent 只负责调用与判断
-- 人工登录一次，长期复用（字节系 cookie 是持久型，登录持久化比 Gemini 简单得多）
+- 人工登录一次，之后长期复用（字节系 cookie 是持久型，登录持久化比 Gemini 简单得多）
 - 发送前有确定性脱敏闸门（私钥整段拒绝、密钥形状脱敏、家目录路径脱敏、尺寸上限）
 - 支持 `[DBB]` 协作协议：让豆包做 PLAN → 你执行 → 它 REVIEW 的循环
+
+> ⚠️ **合规与账号风险**：本项目通过浏览器自动化驱动豆包官方网页版，
+> 可能不符合其服务条款，存在账号被限流、弹滑块/人机验证甚至封禁的风险。
+> 请自行评估并遵守平台条款，**风险自负**；仅供低频个人使用，不要批量滥用。
 
 ## 目录
 
@@ -28,14 +32,19 @@
 
 豆包的能力栏是同类里最宽的（`dbb list-models` 可查当前可用项）：
 
-| 能力 | 说明 | `--capability` 取值 |
+| 能力 | 说明 | 怎么用 |
 | --- | --- | --- |
-| **图像生成** | 出图可下载原图（实测 2048×2048） | `图像生成` |
-| **视频生成** | 文生视频（实测 1280×720 / 10s / 带音轨） | `视频生成` |
-| **音乐生成** | 生成音乐 | `音乐生成` |
-| **AI 播客** | 生成播客音频 | `AI 播客` |
-| **录音转写** | 音频转文字 | `录音转写` |
-| **帮我写作** | 长文写作模式 | `帮我写作` |
+| **图像生成** | 出图可下载原图（实测 2048×2048） | `--capability "图像生成"` |
+| **视频生成** | 文生视频（实测 1280×720 / 10s / 带音轨） | `--capability "视频生成"` |
+| **音乐生成** | 生成音乐 | `--capability "音乐生成"` |
+| **AI 播客** | 生成播客音频 | `--capability "AI 播客"` |
+| **录音转写** | 音频转文字（需用 `--attach` 传音频） | `--capability "录音转写" --attach x.mp3` |
+| **帮我写作** | 长文写作模式（文本模式，不产文件） | `--capability "帮我写作"` |
+
+其他可用的开关：
+
+| 开关 | 说明 | 怎么用 |
+| --- | --- | --- |
 | **多模型可选** | 快速（默认）/ 2.1 Turbo | `--model "2.1 Turbo"` |
 | **协作循环** | 规划 / 执行 / 复核的迭代协议 | `--protocol INIT\|EXECUTED` |
 
@@ -47,34 +56,44 @@
 
 | 类型 | 能力 | 是否需要参数确认 | 是否产出文件 |
 | --- | --- | --- | --- |
-| **产物生成** | 图像生成 / 视频生成 / 音乐生成 / AI 播客 | 视频必现，其余视情况 | ✓ 下载到 `files[]` |
-| **文本模式** | 帮我写作 / 录音转写 | 通常不需要 | 转写可能产出文本文件 |
+| **产物生成**（必须显式 `--capability`） | 图像生成 / 视频生成 / 音乐生成 / AI 播客 / 录音转写 | 视频必现，其余视情况 | ✓ 下载到 `files[]` |
+| **文本模式** | 帮我写作 | 通常不需要 | ✗ 只回文本 |
 
 ## 安装
 
 ### 前置要求
 
-- **Node.js ≥ 20**
+- **Node.js ≥ 20**，含 npm —— 首次配置要把 `playwright-core` 装到状态目录
 - 系统已装 **Chrome / Edge / Brave / Chromium** 任一（自动探测，不下载 Chromium）
 - 能访问 `doubao.com` 的**浏览器**
 - 一个豆包账号（**无需 API key**）
+- **需要图形界面**：首次配置会打开有头浏览器请你本人登录，纯 SSH / 容器环境无法完成
 
 ### 作为 Skill 安装
 
+目标目录不存在时先建父目录（`git clone` 不会自动创建）：
+
 ```bash
+mkdir -p ~/.claude/skills ~/.codex/skills ~/.agents/skills   # 已存在则无副作用
+
+# 三条命令按你的宿主任选其一，不要全都执行
 git clone https://github.com/ops120/doubao-brain ~/.claude/skills/doubao-brain     # Claude Code
 git clone https://github.com/ops120/doubao-brain ~/.codex/skills/doubao-brain      # Codex
 git clone https://github.com/ops120/doubao-brain ~/.agents/skills/doubao-brain     # 通用 / ZCode
 ```
 
+> Windows 的 cmd / PowerShell 不展开 `~`，请改用 `%USERPROFILE%\.claude\skills\...` 这类绝对路径。
+
 装好后对 agent 说：**「用 doubao-brain 完成首次配置」**。
 
-> **关于命令写法**：本文档里的 `dbb <命令>` 是简写，等价于
-> `node "<skill-root>/scripts/dbb/cli.mjs" <命令>`，其中 `<skill-root>` 就是 clone 下来的仓库目录
-> （例如 `~/.agents/skills/doubao-brain`）。想用短命令就自己做个别名：
+> **关于命令写法（重要）**：本文档里的 `dbb <命令>` 是**文档简写**，并非已安装的命令，
+> 等价于 `node "<skill-root>/scripts/dbb/cli.mjs" <命令>`，
+> 其中 `<skill-root>` 就是 clone 下来的仓库目录（例如 `~/.agents/skills/doubao-brain`）。
+> **直接复制示例前请先配别名**（路径按你的实际安装位置改）：
 > ```bash
 > alias dbb='node "$HOME/.agents/skills/doubao-brain/scripts/dbb/cli.mjs"'
 > ```
+> 不配别名也可以，把示例里的 `dbb` 整体替换成上面的 `node "..."` 全路径即可。
 
 ### 首次配置
 
@@ -87,8 +106,9 @@ node "<skill-root>/scripts/dbb/cli.mjs" setup
 3. 打开有头浏览器，**请你本人登录**（手机号验证码 / 抖音扫码，agent 不接触凭证）
 4. 导出登录态并冒烟验证
 
-**登录策略**：登录一次长期有效。字节系的登录 cookie 基本都带 `Expires`（持久型），
-因此不需要 Gemini 那套 session cookie 的 workaround。只有网站**重弹验证**时才需要你介入。
+**登录策略**：登录一次后通常长期有效。字节系的登录 cookie 基本都带 `Expires`（持久型），
+因此不需要 Gemini 那套 session cookie 的 workaround。服务端会话过期、风控或网站**重弹验证**时
+仍需你重新登录。
 
 ## 快速上手
 
@@ -165,16 +185,20 @@ dbb ask --prompt "一只熊猫在竹林里啃竹子，阳光斑驳" --capability
 - 实际耗时通常**比预告快**（预告 10 分钟，实测约 3 分钟）
 - 产物实测 **1280×720 / 10 秒 / H.264 + AAC**，带「豆包AI生成」水印
 - 建议给足超时：`--timeout 900000`（15 分钟）
+- ⚠️ 产物提取依赖页面上的播放器初始化，若长时间无产物，CLI 会以 `STREAM_STALLED`
+  上报而非静默成功
 
 ## 命令面
 
-所有命令都支持 `--json`，以及 `--debug`（保存页面 HTML）、`--keep-open`（保留浏览器窗口）。
+`--json`（机器可读）与 `--debug`（保存页面 HTML）为全局选项；
+`--keep-open`（保留浏览器窗口）只对会打开浏览器的命令（`ask` / `doctor` / `setup` / `login` / `list-models`）有意义。
+各命令的完整参数以 `--help` 为准。示例使用 `dbb` 简写，未配别名时请展开为 `node "<skill-root>/scripts/dbb/cli.mjs"`。
 
 | 命令 | 作用 | 关键参数 |
 | --- | --- | --- |
 | `setup` | 首次配置：装依赖 → 打开浏览器 → 人工登录 | `--timeout <ms>` |
 | `login` | 重新登录 | `--timeout <ms>` |
-| `logout` | 清除登录态 | — |
+| `logout` | 清除登录态（清 `profile/` 与 `storage-state.json`） | — |
 | `doctor` | 体检 | `--deep`（真机探测页面/cookie/模型选择器）、`--html` |
 | `ask` | 提问 / 生成 | `--prompt` / `--prompt-file`、**`--capability`**、`--model`、`--attach`、`--thread`、`--auto-confirm` / `--no-auto-confirm`、`--no-download`、`--protocol <状态>`、`--task <id>`、`--iteration <n>`、`--timeout`、`--allow-sensitive`、`--allow-large` |
 | `list-models` | 列出可用模型与能力栏 | — |
@@ -183,14 +207,18 @@ dbb ask --prompt "一只熊猫在竹林里啃竹子，阳光斑驳" --capability
 | `logs` | 查看脱敏日志 | `-n <行数>`、`--verbose` |
 | `update-check` | 检查更新 | `--force` |
 
-运行方式：`node <skill-root>/scripts/dbb/cli.mjs <命令>`。
+> **注意 `--protocol` 与 `--protocol-state` 是两套不同的枚举，别混用**：
+> `--protocol`（用于 `ask`）取 `INIT` / `PLAN` / `EXECUTING` / `EXECUTED` / `REVIEW` / `HANDOFF`；
+> `--protocol-state`（用于 `session set`）取 `INIT` / `PLAN_RECEIVED` / `EXECUTING` / `EXECUTED_LOCAL` / `EXECUTED_SENT` / `DONE` / `BLOCKED`。
+
+运行方式：`node "<skill-root>/scripts/dbb/cli.mjs" <命令>`。
 
 ### 生成类参数速查
 
 | 参数 | 默认 | 说明 |
 | --- | --- | --- |
-| `--capability <名称>` | 无 | **生成类必填**：`图像生成` / `视频生成` / `音乐生成` / `AI 播客` / `录音转写` / `帮我写作` |
-| `--auto-confirm` | `true` | 自动读取并回复豆包的参数确认。关闭方式：`--no-auto-confirm` 或 `--auto-confirm=false` |
+| `--capability <名称>` | 无 | **产物生成类必填**：`图像生成` / `视频生成` / `音乐生成` / `AI 播客` / `录音转写`（`帮我写作` 为文本模式，可选） |
+| `--auto-confirm` | `true` | 自动读取并回复豆包的参数确认。关闭方式：`--no-auto-confirm` 或 `--auto-confirm=false`。⚠️ 自动确认会一并确认额度消耗，高风险场景建议关闭并由人工确认 |
 | `--no-download` | `false` | **完全跳过产物提取**：`files[]` 为空、`artifacts` 不报告（调试用） |
 | `--timeout <ms>` | `300000` | 视频建议 ≥ `900000` |
 
@@ -216,48 +244,57 @@ dbb ask --prompt "一只熊猫在竹林里啃竹子，阳光斑驳" --capability
   "modes": { "model": "快速", "requested": null,
              "capability": "视频生成", "capabilityRequested": "视频生成" },
   "text": "……回答正文……",
-  "files": [{ "file": "C:/Users/…/downloads/<wsid>/doubao-video-1731…-0.mp4",
+  "files": [{ "file": "<state>/downloads/<wsid>/doubao-video-1731…-0.mp4",
               "bytes": 2840316, "kind": "video", "contentType": "video/mp4" }],
   "artifacts": { "videos": 1, "images": 0 },
   "confirmRounds": 1,
-  "mode": "chat | artifact",
+  "mode": "artifact",
   "truncated": false,
   "elapsedMs": 187774
 }
 ```
+
+> `file` 是**状态目录下**的绝对路径，即
+> `%LOCALAPPDATA%\doubao-brain\downloads\<workspaceId>\…`（Windows）或对应的 macOS / Linux 路径，
+> 不是项目目录。
 
 **字段说明**：
 
 - `modes.model` —— **实际生效**的模型（从按钮读取，如「快速」「2.1 Turbo」）
 - `modes.requested` —— **仅指请求的模型**（`--model` 的值）；未指定时为 `null`
 - 二者不一致时必须标注；能力另由 `capability` / `capabilityRequested` 表示
-- `modes.capability` —— 实际生效的能力（生成类任务的关键字段）
+- `modes.capability` —— 实际生效的能力（生成类任务的关键字段）。⚠️ 若未显式传 `--capability`，
+  这里可能是**上一次残留**的能力栏状态，不代表本次请求
 - `files[]` —— **已下载到本地的产物**绝对路径，带 `kind`（`video` / `image`）与 `contentType`
 - `artifacts` —— 页面上发现的产物计数（`videos` / `images`）
 - `confirmRounds` —— 走了几轮参数确认（视频通常为 1）
+- `mode` —— 取值 `chat`（纯文本）或 `artifact`（有产物下载）
 - `truncated` —— `true` 表示可能被截断，需如实告知用户
 
-失败（**判别联合**）：`{ "ok": false, "reason": "LOGIN_REQUIRED", "message": "…" }`
+失败（**判别联合**）：`{ "ok": false, "reason": "LOGIN_REQUIRED", "message": "…" }`；
+限流场景会额外带 `retryAfterMs`（建议退避毫秒数）。
 
 ## 协作协议（`[DBB]`）
 
 与 deepseek-brain / gemini-brain 同构：让豆包当「规划与审查大脑」，
-**执行权始终在本地 agent 手里**。
+**执行权始终在本地 agent 手里**。示例使用 `dbb` 简写，未配别名时请展开为全路径。
 
 ```bash
 dbb ask --protocol INIT --task dbb_f81a --iteration 0 --prompt-file goal.txt --json
-#   → protocol.reply.state：PLAN = 拿到方案 | BLOCKED = 停下问用户
+#   → protocol.reply：PLAN = 拿到方案 | BLOCKED = 停下问用户
 
 dbb ask --protocol EXECUTED --iteration 1 --prompt-file report.txt --json
 #   → DONE = 结束 | PLAN = 还有下一轮 | BLOCKED = 停下
+#   --task / --iteration 省略时会自动沿用工作区 session 里的值
 
 dbb thread status --json   # 查进度（checkpoint 自动落盘）
 ```
 
 - 信封由 CLI 自动封装，回复状态由代码解析
-- 迭代上限默认 12，到顶暂停问用户
+- 建议同一任务不超过 12 轮，到顶暂停问用户（这是给 agent 的使用约定，不是 CLI 参数）
 - 线程丢失 → 依据 checkpoint 发 HANDOFF，**不粘贴日志或 diff**
-- 详见 [references/protocol.md](references/protocol.md)
+- 协议模式下返回值会多一个 `protocol` 字段（`sent` / `reply` / `taskId` / `iteration`），
+  详见 [references/protocol.md](references/protocol.md)
 
 ## 失败处理
 
@@ -266,11 +303,11 @@ dbb thread status --json   # 查进度（checkpoint 自动落盘）
 | `LOGIN_REQUIRED` | 登录失效 | 停；让用户登录，一次一个动作 |
 | `HUMAN_VERIFICATION_REQUIRED` | 人机验证（豆包为**滑块 / 拖动验证**） | 停；用户在浏览器手动完成，一次一个动作 |
 | `RATE_LIMITED` | 限流 | 停；按 `retryAfterMs` 退避 |
-| `COMPOSER_NOT_FOUND` / `SITE_CHANGED` | 站点改版、选择器漂移 | **版本问题**：`doctor --deep` 定位，修 `src/site.mjs` 并发版 |
+| `COMPOSER_NOT_FOUND` / `SITE_CHANGED` | 站点改版、选择器漂移 | **版本问题**：`doctor --deep` 定位，修 `scripts/dbb/src/site.mjs` 并发版 |
 | `SEND_FAILED` | 发送失败 | 重试一次 |
 | `INJECT_MISMATCH` | 注入到输入框的内容与预期长度偏差 > 10%（可能残留旧文本） | 检查是否清空失败；重试一次，仍失败按 `SITE_CHANGED` |
 | `STREAM_STALLED` | 流式停滞 / 超时 | 标注「可能截断」；生成类任务可给更长超时后重试 |
-| `UPLOAD_REJECTED` | 附件被拒 | 检查类型 / 大小 |
+| `UPLOAD_REJECTED` | 附件被拒 | 检查类型 / 大小（网页端限制由豆包决定，CLI 不预设白名单） |
 | `THREAD_LOST` | 会话 404 | 新会话重问（或 HANDOFF） |
 | `LOCKED` | 浏览器被占用 | 等，或问用户 |
 | `DEPENDENCY_MISSING` | 依赖缺失 | `setup` 自愈 |
@@ -293,7 +330,7 @@ dbb thread status --json   # 查进度（checkpoint 自动落盘）
 ```
 Windows  %LOCALAPPDATA%\doubao-brain\
 macOS    ~/Library/Application Support/doubao-brain/
-Linux    $XDG_STATE_HOME/doubao-brain/
+Linux    $XDG_STATE_HOME/doubao-brain/   （该变量未设置时通常为 ~/.local/state/doubao-brain/）
 ```
 
 | 内容 | 说明 |
@@ -305,7 +342,7 @@ Linux    $XDG_STATE_HOME/doubao-brain/
 | `threads/<workspaceId>.json` | 工作区级线程与检查点 |
 | `outputs/<workspaceId>.jsonl` | 审计：每次问答一行元数据 |
 | `logs/dbb.log` | 脱敏日志 |
-| `debug/` | 仅 `--debug` 或失败时保存的页面截图与 HTML —— ⚠️ **可能含回答正文与你的输入，未脱敏**，排障后建议删除 |
+| `debug/` | 仅 `--debug` 或失败时保存的页面截图与 HTML —— ⚠️ **可能含回答正文与你的输入，未脱敏**，排障后建议删除；**不要直接上传到公开 issue** |
 
 **隐私要点**：
 
@@ -406,20 +443,24 @@ Linux    $XDG_STATE_HOME/doubao-brain/
 唯一需要改的地方是 **`scripts/dbb/src/site.mjs`**：
 
 ```bash
-node <skill-root>/scripts/dbb/cli.mjs doctor --deep --html --json   # 定位漂移
-# 改 site.mjs（选择器集中在此，注意用前缀匹配）
-node scripts/dbb/tests/sanitize.test.mjs                            # 跑单测
+# 在 skill 根目录执行（<skill-root> 换成实际安装路径）
+node "<skill-root>/scripts/dbb/cli.mjs" doctor --deep --html --json   # 定位漂移
+# 改 scripts/dbb/src/site.mjs（选择器集中在此，注意用前缀匹配）
+node "<skill-root>/scripts/dbb/tests/sanitize.test.mjs"               # 跑单测
 ```
 
 ## 边界
 
 - **低频辅助工具**：每次问答会真实打开浏览器窗口，不适合批量调用。
+  生成类任务耗时长属正常（视频实测约 3 分钟，给足 `--timeout`）。
 - **不做批量 / 不做并发**：同一时间只跑一个会话。
-- **不做 web2api**：只驱动官方网页。
-- **能力以页面实际显示为准**：`dbb list-models` 可查当前可用能力；
+- **不做 web2api**：只在本机驱动官方网页，不逆向私有协议、不做 HTTP 代理、不对外暴露接口。
+- **能力以页面实际显示为准**：`dbb list-models` 可查当前可用模型与能力栏；
   豆包会调整能力栏（如新增/下线某项）。
 - **产物带水印**：生成的图片/视频带「豆包AI生成」水印（平台行为，无法去除）。
-- **消耗每日额度**：视频生成会提示"本次生成将消耗每日免费额度"。
+- **消耗每日额度**：视频生成会提示"本次生成将消耗每日免费额度"；
+  `--auto-confirm` 默认会自动确认这一步，介意的话用 `--no-auto-confirm`。
+- **合规风险**：自动化驱动网页版可能违反平台条款，存在限流/验证/封号风险，详见文首警告。
 
 ## 项目结构
 
