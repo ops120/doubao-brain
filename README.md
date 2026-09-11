@@ -62,9 +62,9 @@
 ### 作为 Skill 安装
 
 ```bash
-git clone <repo-url> ~/.claude/skills/doubao-brain     # Claude Code
-git clone <repo-url> ~/.codex/skills/doubao-brain      # Codex
-git clone <repo-url> ~/.agents/skills/doubao-brain     # 通用 / ZCode
+git clone https://github.com/ops120/doubao-brain ~/.claude/skills/doubao-brain     # Claude Code
+git clone https://github.com/ops120/doubao-brain ~/.codex/skills/doubao-brain      # Codex
+git clone https://github.com/ops120/doubao-brain ~/.agents/skills/doubao-brain     # 通用 / ZCode
 ```
 
 装好后对 agent 说：**「用 doubao-brain 完成首次配置」**。
