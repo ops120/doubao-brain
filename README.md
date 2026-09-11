@@ -3,7 +3,7 @@
 把 **豆包网页版**当作编码 agent 的**外部大脑**：它出推理与内容，你的 agent 出执行。
 不需要 API key，不做逆向代理 —— 只驱动官方网页。
 
-- 由本地确定性 CLI（`dbb`）驱动，Agent 只负责调用与判断
+- 由本地确定性 CLI（`dbb`）驱动（确定性体现在脱敏闸门、可枚举失败码与统一契约上），Agent 只负责调用与判断
 - 人工登录一次，之后长期复用（字节系 cookie 是持久型，登录持久化比 Gemini 简单得多）
 - 发送前有确定性脱敏闸门（私钥整段拒绝、密钥形状脱敏、家目录路径脱敏、尺寸上限）
 - 支持 `[DBB]` 协作协议：让豆包做 PLAN → 你执行 → 它 REVIEW 的循环
@@ -30,7 +30,7 @@
 
 ## 能力
 
-豆包的能力栏是同类里最宽的（`dbb list-models` 可查当前可用项）：
+豆包的能力栏在本族三个 brain 中覆盖较广（`dbb list-models` 可查当前可用项）：
 
 | 能力 | 说明 | 怎么用 |
 | --- | --- | --- |
@@ -70,7 +70,7 @@
 - 系统已装 **Chrome / Edge / Brave / Chromium** 任一（自动探测，不下载 Chromium）
 - 能访问 `doubao.com` 的**浏览器**
 - 一个豆包账号（**无需 API key**）
-- **需要图形界面**：首次配置会打开有头浏览器请你本人登录，纯 SSH / 容器环境无法完成
+- **需要图形界面**：首次配置要打开有头浏览器请你本人登录，之后**每次问答也会真实打开浏览器窗口**（问完自动关闭），纯 SSH / 容器环境无法使用
 
 ### 作为 Skill 安装
 
@@ -93,18 +93,24 @@ git clone https://github.com/ops120/doubao-brain ~/.agents/skills/doubao-brain  
 装好后对 agent 说：**「用 doubao-brain 完成首次配置」**。
 
 > **关于命令写法（重要）**：本文档里的 `dbb <命令>` 是**文档简写**，并非已安装的命令，
-> 等价于 `node "<skill-root>/scripts/dbb/cli.mjs" <命令>`，
-> 其中 `<skill-root>` 就是 clone 下来的仓库目录（例如 `~/.agents/skills/doubao-brain`）。
-> **直接复制示例前请先配别名**（路径按你的实际安装位置改）：
+> 等价于 `node "$SKILL_ROOT/scripts/dbb/cli.mjs" <命令>`，
+> 其中 `SKILL_ROOT` 是你 clone 下来的仓库目录（例如 `~/.agents/skills/doubao-brain`）。
+>
+> **推荐先设变量再配别名**（按你的宿主任选一行改）：
 > ```bash
-> alias dbb='node "$HOME/.agents/skills/doubao-brain/scripts/dbb/cli.mjs"'
+> # Claude Code：SKILL_ROOT="$HOME/.claude/skills/doubao-brain"
+> # Codex：      SKILL_ROOT="$HOME/.codex/skills/doubao-brain"
+> # 通用/ZCode： SKILL_ROOT="$HOME/.agents/skills/doubao-brain"
+> SKILL_ROOT="$HOME/.agents/skills/doubao-brain"   # ← 改成你实际用的那个
+> export SKILL_ROOT
+> alias dbb='node "$SKILL_ROOT/scripts/dbb/cli.mjs"'
 > ```
-> 不配别名也可以，把示例里的 `dbb` 整体替换成上面的 `node "..."` 全路径即可。
+> 不配别名也可以，把示例里的 `dbb` 整体替换成 `node "$SKILL_ROOT/scripts/dbb/cli.mjs"`。
 
 ### 首次配置
 
 ```bash
-node "<skill-root>/scripts/dbb/cli.mjs" setup
+node "$SKILL_ROOT/scripts/dbb/cli.mjs" setup
 ```
 
 1. 检查 Node 版本与系统浏览器
@@ -120,34 +126,34 @@ node "<skill-root>/scripts/dbb/cli.mjs" setup
 
 ```bash
 # 体检（建议每次任务前跑）
-node "<skill-root>/scripts/dbb/cli.mjs" doctor --json
+node "$SKILL_ROOT/scripts/dbb/cli.mjs" doctor --json
 
 # 普通问答
-node "<skill-root>/scripts/dbb/cli.mjs" ask --prompt-file ./question.txt --json
+node "$SKILL_ROOT/scripts/dbb/cli.mjs" ask --prompt-file ./question.txt --json
 
 # 指定模型
-node "<skill-root>/scripts/dbb/cli.mjs" ask --prompt "分析下这段代码" --model "2.1 Turbo" --json
+node "$SKILL_ROOT/scripts/dbb/cli.mjs" ask --prompt "分析下这段代码" --model "2.1 Turbo" --json
 
 # 列出模型与能力
-node "<skill-root>/scripts/dbb/cli.mjs" list-models --json
+node "$SKILL_ROOT/scripts/dbb/cli.mjs" list-models --json
 
 # 写检查点（session set 完整形态；protocol-state / waiting-for 只接受枚举值）
 #   --protocol-state: INIT | PLAN_RECEIVED | EXECUTING | EXECUTED_LOCAL | EXECUTED_SENT | DONE | BLOCKED
 #   --waiting-for:    none | BRAIN_PLAN | BRAIN_REVIEW | USER
-node "<skill-root>/scripts/dbb/cli.mjs" session set   --protocol-state PLAN_RECEIVED --waiting-for none --next-step "execute PLAN" --json
+node "$SKILL_ROOT/scripts/dbb/cli.mjs" session set   --protocol-state PLAN_RECEIVED --waiting-for none --next-step "execute PLAN" --json
 
 # 生成图片
-node "<skill-root>/scripts/dbb/cli.mjs" ask \
+node "$SKILL_ROOT/scripts/dbb/cli.mjs" ask \
   --prompt "一只布偶猫趴在窗台上晒太阳，油画风格" \
   --capability "图像生成" --thread new --json
 
 # 生成视频（异步，需要更长超时）
-node "<skill-root>/scripts/dbb/cli.mjs" ask \
+node "$SKILL_ROOT/scripts/dbb/cli.mjs" ask \
   --prompt "一只熊猫在竹林里啃竹子，阳光斑驳" \
   --capability "视频生成" --timeout 900000 --json
 
 # 附件分析
-node "<skill-root>/scripts/dbb/cli.mjs" ask --prompt "总结这份文档" --attach ./doc.pdf --json
+node "$SKILL_ROOT/scripts/dbb/cli.mjs" ask --prompt "总结这份文档" --attach ./doc.pdf --json
 ```
 
 对 agent 说人话也一样：**「让豆包画一只猫」**、**「用豆包生成一段短视频」**。
@@ -198,7 +204,7 @@ dbb ask --prompt "一只熊猫在竹林里啃竹子，阳光斑驳" --capability
 
 `--json`（机器可读）与 `--debug`（保存页面 HTML）为全局选项；
 `--keep-open`（保留浏览器窗口）只对会打开浏览器的命令（`ask` / `doctor` / `setup` / `login` / `list-models`）有意义。
-各命令的完整参数以 `--help` 为准。示例使用 `dbb` 简写，未配别名时请展开为 `node "<skill-root>/scripts/dbb/cli.mjs"`。
+各命令的完整参数以 `--help` 为准。示例使用 `dbb` 简写，未配别名时请展开为 `node "$SKILL_ROOT/scripts/dbb/cli.mjs"`。
 
 | 命令 | 作用 | 关键参数 |
 | --- | --- | --- |
@@ -217,14 +223,14 @@ dbb ask --prompt "一只熊猫在竹林里啃竹子，阳光斑驳" --capability
 > `--protocol`（用于 `ask`）取 `INIT` / `PLAN` / `EXECUTING` / `EXECUTED` / `REVIEW` / `HANDOFF`；
 > `--protocol-state`（用于 `session set`）取 `INIT` / `PLAN_RECEIVED` / `EXECUTING` / `EXECUTED_LOCAL` / `EXECUTED_SENT` / `DONE` / `BLOCKED`。
 
-运行方式：`node "<skill-root>/scripts/dbb/cli.mjs" <命令>`。
+运行方式：`node "$SKILL_ROOT/scripts/dbb/cli.mjs" <命令>`。
 
 ### 生成类参数速查
 
 | 参数 | 默认 | 说明 |
 | --- | --- | --- |
 | `--capability <名称>` | 无 | **产物生成类必填**：`图像生成` / `视频生成` / `音乐生成` / `AI 播客` / `录音转写`（`帮我写作` 为文本模式，可选） |
-| `--auto-confirm` | `true` | 自动读取并回复豆包的参数确认。关闭方式：`--no-auto-confirm`（也支持 `--auto-confirm=false`）。⚠️ 自动确认会一并确认额度消耗，高风险场景建议关闭并由人工确认 |
+| `--auto-confirm` | `true` | 自动读取并回复豆包的参数确认。关闭方式：`--no-auto-confirm`（也支持 `--auto-confirm=false`）。关闭后 CLI **不会**替你回复，需要你在打开的浏览器窗口里手动完成确认，否则任务不会开始生成。⚠️ 自动确认会一并确认额度消耗，高风险场景建议关闭并由人工确认 |
 | `--no-download` | `false` | **完全跳过产物提取**：`files[]` 为空、`artifacts` 不报告（调试用） |
 | `--timeout <ms>` | `300000` | 视频建议 ≥ `900000` |
 
@@ -275,7 +281,9 @@ dbb ask --prompt "一只熊猫在竹林里啃竹子，阳光斑驳" --capability
 - 二者不一致时必须标注；能力另由 `capability` / `capabilityRequested` 表示
 - `modes.capability` —— 实际生效的能力（生成类任务的关键字段）。⚠️ 若未显式传 `--capability`，
   这里可能是**上一次残留**的能力栏状态，不代表本次请求
-- `files[]` —— **已下载到本地的产物**绝对路径，带 `kind`（`video` / `image`）与 `contentType`
+- `files[]` —— **已下载到本地的产物**绝对路径，带 `kind` 与 `contentType`。
+  当前产物提取覆盖 **`kind: "video" | "image"`**；音乐 / 播客等音频类产物是否落盘以页面实际为准，
+  必要时用 `--no-download` 关闭提取后自行在页面保存
 - `artifacts` —— 页面上发现的产物计数（`videos` / `images`）
 - `confirmRounds` —— 走了几轮参数确认（视频通常为 1）
 - `mode` —— 取值 `chat`（纯文本）或 `artifact`（有产物下载）
@@ -315,7 +323,7 @@ dbb thread status --json   # 查进度（checkpoint 自动落盘）
 | `LOGIN_REQUIRED` | 登录失效 | 停；让用户登录，一次一个动作 |
 | `HUMAN_VERIFICATION_REQUIRED` | 人机验证（豆包为**滑块 / 拖动验证**） | 停；用户在浏览器手动完成，一次一个动作 |
 | `RATE_LIMITED` | 限流 | 停；按 `retryAfterMs` 退避 |
-| `COMPOSER_NOT_FOUND` / `SITE_CHANGED` | 站点改版、选择器漂移 | **版本问题**：`doctor --deep` 定位，修 `scripts/dbb/src/site.mjs` 并发版 |
+| `COMPOSER_NOT_FOUND` / `SITE_CHANGED` | 站点改版、选择器漂移 | **版本问题**：先 `doctor --deep` 确认；普通用户提 issue 等上游发版即可，`scripts/dbb/src/site.mjs` 的修改面向维护者 |
 | `SEND_FAILED` | 发送失败 | 重试一次 |
 | `INJECT_MISMATCH` | 注入到输入框的内容与预期长度偏差 > 10%（可能残留旧文本） | 检查是否清空失败；重试一次，仍失败按 `SITE_CHANGED` |
 | `STREAM_STALLED` | 流式停滞 / 超时 | 标注「可能截断」；生成类任务可给更长超时后重试 |
@@ -456,9 +464,9 @@ Linux    $XDG_STATE_HOME/doubao-brain/   （该变量未设置时通常为 ~/.lo
 
 ```bash
 # 在 skill 根目录执行（<skill-root> 换成实际安装路径）
-node "<skill-root>/scripts/dbb/cli.mjs" doctor --deep --html --json   # 定位漂移
+node "$SKILL_ROOT/scripts/dbb/cli.mjs" doctor --deep --html --json   # 定位漂移
 # 改 scripts/dbb/src/site.mjs（选择器集中在此，注意用前缀匹配）
-node "<skill-root>/scripts/dbb/tests/sanitize.test.mjs"               # 跑单测
+node "$SKILL_ROOT/scripts/dbb/tests/sanitize.test.mjs"               # 跑单测
 ```
 
 ## 边界
@@ -471,10 +479,12 @@ node "<skill-root>/scripts/dbb/tests/sanitize.test.mjs"               # 跑单�
   豆包会调整能力栏（如新增/下线某项）。
 - **产物带水印**：生成的图片/视频带「豆包AI生成」水印（平台行为，无法去除）。
 - **消耗每日额度**：视频生成会提示"本次生成将消耗每日免费额度"；
-  `--auto-confirm` 默认会自动确认这一步，介意的话用 `--no-auto-confirm`。
+  `--auto-confirm` 默认会自动确认这一步，介意的话用 `--no-auto-confirm`（届时需你手动确认）。
 - **合规风险**：自动化驱动网页版可能违反平台条款，存在限流/验证/封号风险，详见文首警告。
 - **登录态**：本项目实测登录可长期复用（字节系 cookie 带 `Expires`）；
   实际有效期取决于平台策略，服务端过期或风控时仍需重新登录。
+- **数据会变**：上文的分辨率、时长、模型名（Seedance）与耗时均为编写时实测值，
+  平台随时可能调整，**以页面实际显示为准**。
 
 ## 项目结构
 
