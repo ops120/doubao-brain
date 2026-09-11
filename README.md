@@ -60,12 +60,13 @@
 | 类型 | 能力 | 是否需要参数确认 | 是否产出文件 |
 | --- | --- | --- | --- |
 | **产物生成**（必须显式 `--capability`） | 图像生成 / 视频生成 | 视频必现，其余视情况 | ✓ 自动下载到 `files[]`（`kind: video` / `image`） |
-| **产物生成**（必须显式 `--capability`） | 音乐生成 / AI 播客 | 视情况 | △ 页面会产出音频，但**当前 CLI 的自动提取只覆盖 video / image**；建议加 `--no-download` 后在页面上手动保存 |
+| **产物生成**（必须显式 `--capability`） | 音乐生成 / AI 播客 | 视情况 | △ 页面会产出音频，但**当前 CLI 的自动提取只覆盖 video / image**；要手动保存请同时加 `--no-download --keep-open`（否则窗口会随任务结束自动关闭） |
 | **转写类**（必须显式 `--capability`） | 录音转写 | 视情况 | △ 音频转文字，**结果是文本**，走 `text` 返回而非 `files[]` |
 | **文本模式** | 帮我写作 | 通常不需要 | ✗ 只回文本 |
 
-> 代码里的判定：`GENERATIVE = /图像生成|视频生成|音乐生成|AI 播客|录音转写/` 都会走产物提取流程；
-> `帮我写作` 不在其中。提取流程当前只识别视频与图片两类产物。
+> 代码里的判定：`GENERATIVE = /图像生成|视频生成|音乐生成|AI 播客|录音转写/` 会按「生成类」等待产物；
+> `帮我写作` 不在其中。但**实际提取只识别视频与图片两类**——音乐/播客的音频、录音转写的文本
+> 都不会进入 `files[]`（转写结果走 `text`）。
 
 ## 安装
 
@@ -94,7 +95,7 @@ git clone https://github.com/ops120/doubao-brain ~/.agents/skills/doubao-brain  
 
 > Windows 的 cmd / PowerShell 不展开 `~`，请改用绝对路径，例如：
 > ```bat
-> :: cmd
+> REM cmd
 > git clone https://github.com/ops120/doubao-brain "%USERPROFILE%\.agents\skills\doubao-brain"
 > ```
 > ```powershell
@@ -119,6 +120,18 @@ git clone https://github.com/ops120/doubao-brain ~/.agents/skills/doubao-brain  
 > alias dbb='node "$SKILL_ROOT/scripts/dbb/cli.mjs"'
 > ```
 > 不配别名也可以，把示例里的 `dbb` 整体替换成 `node "$SKILL_ROOT/scripts/dbb/cli.mjs"`。
+>
+> **Windows 用户注意**：cmd / PowerShell **不展开 `$SKILL_ROOT` 这种 bash 变量**，也没有 `alias`。
+> ```bat
+> REM cmd：直接用完整路径（换成你的实际安装位置）
+> node "%USERPROFILE%\.agents\skills\doubao-brain\scripts\dbb\cli.mjs" doctor --json
+> ```
+> ```powershell
+> # PowerShell：可先设变量，同一会话内后续命令都能用
+> $SKILL_ROOT = "$env:USERPROFILE\.agents\skills\doubao-brain"
+> node "$SKILL_ROOT\scripts\dbb\cli.mjs" doctor --json
+> ```
+> 写进 PowerShell 的 `$PROFILE` 即可长期生效。
 
 ### 首次配置
 
@@ -229,11 +242,12 @@ node "$SKILL_ROOT/scripts/dbb/cli.mjs" ask \
 | `setup` | 首次配置：装依赖 → 打开浏览器 → 人工登录 | `--timeout <ms>` |
 | `login` | 重新登录 | `--timeout <ms>` |
 | `logout` | 清除登录态（清 `profile/` 与 `storage-state.json`） | — |
-| `doctor` | 体检 | `--deep`（真机探测页面/cookie/模型选择器）、`--html` |
+| `doctor` | 体检 | `--deep`（真机探测页面/cookie/模型选择器；**同时才会检查登录态**）、`--html`（doctor 专用页面转储；全局 `--debug` 是任何命令都可用的通用排障快照，两者都落在状态目录 `debug/`） |
 | `ask` | 提问 / 生成 | `--prompt` / `--prompt-file`、**`--capability`**、`--model`、`--attach`、`--thread new`（省略则复用当前线程）、`--auto-confirm` / `--no-auto-confirm`、`--no-download`、`--protocol <状态>`、`--task <id>`、`--iteration <n>`、`--timeout`、`--allow-sensitive`、`--allow-large` |
 | `list-models` | 列出可用模型与能力栏 | — |
 | `thread` | 线程管理 | `status` / `use <url>` / `new` |
-| `session` | 工作区级线程与检查点 | `get` / `set --protocol-state --waiting-for --next-step ...` |
+| `session` | 工作区级线程与检查点 | `get`；`set --protocol-state <状态> --waiting-for <值> --next-step "..."`
+  （`--waiting-for`: `none` / `BRAIN_PLAN` / `BRAIN_REVIEW` / `USER`） |
 | `logs` | 查看脱敏日志 | `-n <行数>`、`--verbose` |
 | `update-check` | 检查更新 | `--force` |
 
@@ -247,10 +261,11 @@ node "$SKILL_ROOT/scripts/dbb/cli.mjs" ask \
 
 | 参数 | 默认 | 说明 |
 | --- | --- | --- |
-| `--capability <名称>` | 无 | **产物生成类必填**：`图像生成` / `视频生成` / `音乐生成` / `AI 播客` / `录音转写`（`帮我写作` 为文本模式，可选） |
-| `--auto-confirm` | `true` | 自动读取并回复豆包的参数确认。关闭方式：`--no-auto-confirm`（也支持 `--auto-confirm=false`）。关闭后 CLI **不会**替你回复，需要你在打开的浏览器窗口里手动完成确认，否则任务不会开始生成。⚠️ 自动确认会一并确认额度消耗，高风险场景建议关闭并由人工确认 |
+| `--capability <名称>` | 无 | **必须显式指定**：`图像生成` / `视频生成` / `音乐生成` / `AI 播客` / `录音转写`；`帮我写作` 为文本模式（也可不传） |
+| `--auto-confirm` | `true` | 自动读取并回复豆包的参数确认。关闭方式：`--no-auto-confirm`（也支持 `--auto-confirm=false`）。关闭后 CLI **不会**替你回复，需要你在浏览器窗口里手动完成确认（**请同时加 `--keep-open`**，
+否则窗口会随任务结束关闭、来不及操作），否则任务不会开始生成。⚠️ 自动确认会一并确认额度消耗，高风险场景建议关闭并由人工确认 |
 | `--no-download` | `false` | **完全跳过产物提取**：`files[]` 为空、`artifacts` 不报告（调试用） |
-| `--timeout <ms>` | `300000` | 视频建议 ≥ `900000` |
+| `--timeout <ms>` | `300000` | ⚠️ 默认 5 分钟，**视频生成必须显式传 `--timeout 900000`**，否则可能在预告的 10 分钟内就提前超时 |
 
 > **视频模型不由 `--model` 控制**：`--model` 只切换对话模型（快速 / 2.1 Turbo）；
 > 视频的生成模型（实测为 Seedance 2.0 Mini）由页面参数面板决定，CLI 不提供指定参数，
@@ -351,7 +366,7 @@ node "$SKILL_ROOT/scripts/dbb/cli.mjs" thread status --json   # 查进度（chec
 | `THREAD_LOST` | 会话 404 | 新会话重问（或 HANDOFF） |
 | `LOCKED` | 浏览器被占用 | 等，或问用户 |
 | `DEPENDENCY_MISSING` | 依赖缺失 | `setup` 自愈 |
-| `SENSITIVE_BLOCKED` | 闸门拦截 | 移除敏感内容；确需发送须用户明确同意后加 `--allow-sensitive`——它会**关闭全部脱敏**（密钥形状、家目录路径等按原文发往站点），仅保留私钥块仍拒绝，请务必确认用户知情 |
+| `SENSITIVE_BLOCKED` | 闸门拦截 | 移除敏感内容；确需发送须用户明确同意后加 `--allow-sensitive`——它会**关闭除「私钥块拒绝」外的全部脱敏**（密钥形状、家目录路径等按原文发往站点），请务必确认用户知情 |
 | `PAYLOAD_TOO_LARGE` | 正文超 50 KB | 摘要或分片；`--allow-large` 放宽到 200 KB |
 
 完整表（含对用户话术）见 [references/failure-taxonomy.md](references/failure-taxonomy.md)。
