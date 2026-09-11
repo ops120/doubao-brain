@@ -60,7 +60,8 @@
 | 类型 | 能力 | 是否需要参数确认 | 是否产出文件 |
 | --- | --- | --- | --- |
 | **产物生成**（必须显式 `--capability`） | 图像生成 / 视频生成 | 视频必现，其余视情况 | ✓ 自动下载到 `files[]`（`kind: video` / `image`） |
-| **产物生成**（必须显式 `--capability`） | 音乐生成 / AI 播客 / 录音转写 | 视情况 | △ 页面会产出音频/文本，但**当前 CLI 的自动提取只覆盖 video / image**；音频类建议加 `--no-download` 后在页面上手动保存 |
+| **产物生成**（必须显式 `--capability`） | 音乐生成 / AI 播客 | 视情况 | △ 页面会产出音频，但**当前 CLI 的自动提取只覆盖 video / image**；建议加 `--no-download` 后在页面上手动保存 |
+| **转写类**（必须显式 `--capability`） | 录音转写 | 视情况 | △ 音频转文字，**结果是文本**，走 `text` 返回而非 `files[]` |
 | **文本模式** | 帮我写作 | 通常不需要 | ✗ 只回文本 |
 
 > 代码里的判定：`GENERATIVE = /图像生成|视频生成|音乐生成|AI 播客|录音转写/` 都会走产物提取流程；
@@ -136,8 +137,11 @@ node "$SKILL_ROOT/scripts/dbb/cli.mjs" setup
 
 ## 快速上手
 
+> **以下命令假定你已按安装章节设置 `SKILL_ROOT`**（或已配好别名）；
+> 没设过就直接复制会因变量为空而报错，请先把占位路径换成你的实际安装目录。
+
 ```bash
-# 体检（建议每次任务前跑；--deep 才会真机探测并检查登录态）
+# 体检（建议每次任务前跑；浅层不查登录态，要查登录请改用 doctor --deep --json）
 node "$SKILL_ROOT/scripts/dbb/cli.mjs" doctor --json
 
 # 普通问答
@@ -178,7 +182,8 @@ node "$SKILL_ROOT/scripts/dbb/cli.mjs" ask --prompt "总结这份文档" --attac
 ### 图片生成
 
 ```bash
-node "$SKILL_ROOT/scripts/dbb/cli.mjs" ask \n  --prompt "一只柴犬坐在樱花树下，水彩插画风格" --capability "图像生成" --thread new --json
+node "$SKILL_ROOT/scripts/dbb/cli.mjs" ask \
+  --prompt "一只柴犬坐在樱花树下，水彩插画风格" --capability "图像生成" --thread new --json
 ```
 
 - 实测约 **30 秒**完成，一次返回 **4 张 2048×2048** 原图（每张 5–7 MB）
@@ -187,7 +192,8 @@ node "$SKILL_ROOT/scripts/dbb/cli.mjs" ask \n  --prompt "一只柴犬坐在樱�
 ### 视频生成（异步 + 参数确认）
 
 ```bash
-node "$SKILL_ROOT/scripts/dbb/cli.mjs" ask \n  --prompt "一只熊猫在竹林里啃竹子，阳光斑驳" --capability "视频生成" --thread new --timeout 900000 --json
+node "$SKILL_ROOT/scripts/dbb/cli.mjs" ask \
+  --prompt "一只熊猫在竹林里啃竹子，阳光斑驳" --capability "视频生成" --thread new --timeout 900000 --json
 ```
 
 视频走的是**六步流程**（CLI 已全自动处理），可归纳为：能力切换 → 发送提示词 → 参数确认 → 异步受理 → 产物推送 → 下载：
@@ -215,7 +221,7 @@ node "$SKILL_ROOT/scripts/dbb/cli.mjs" ask \n  --prompt "一只熊猫在竹林�
 ## 命令面
 
 `--json`（机器可读）与 `--debug`（保存页面 HTML）为全局选项；
-`--keep-open`（保留浏览器窗口）只对会打开浏览器的命令（`ask` / `doctor --deep` / `setup` / `login` / `list-models`）有意义。
+`--keep-open`（保留浏览器窗口）只对会打开浏览器的命令（`ask` / `setup` / `login` / `list-models`，以及带 `--deep` 的 `doctor`）有意义。
 各命令的完整参数以 `--help` 为准。示例使用 `dbb` 简写，未配别名时请展开为 `node "$SKILL_ROOT/scripts/dbb/cli.mjs"`。
 
 | 命令 | 作用 | 关键参数 |
@@ -487,7 +493,9 @@ node "$SKILL_ROOT/scripts/dbb/tests/sanitize.test.mjs"               # 仅覆盖
 ## 边界
 
 - **低频辅助工具**：每次问答会真实打开浏览器窗口，不适合批量调用。
-  生成类任务耗时长属正常（视频实测约 3 分钟，给足 `--timeout`）。- **不做批量 / 不做并发**：同一时间只跑一个会话。
+  生成类任务耗时长属正常（视频实测约 3 分钟，给足 `--timeout`）。
+
+- **不做批量 / 不做并发**：同一时间只跑一个会话。
 - **不做 web2api**：只在本机驱动官方网页，不逆向私有协议、不做 HTTP 代理、不对外暴露接口。
 - **能力以页面实际显示为准**：`dbb list-models` 可查当前可用模型与能力栏；
   豆包会调整能力栏（如新增/下线某项）。
@@ -503,6 +511,7 @@ node "$SKILL_ROOT/scripts/dbb/tests/sanitize.test.mjs"               # 仅覆盖
 ## 项目结构
 
 ```
+LICENSE                 MIT 许可证
 SKILL.md                给 agent 的说明书
 README.md               本文件
 references/
@@ -528,7 +537,7 @@ scripts/dbb/
 
 | | deepseek-brain | gemini-brain | doubao-brain |
 | --- | --- | --- | --- |
-| CLI | `dsb` | `gmb` | `dbb` |
+| CLI（均为文档简写，实际入口是 `node <仓库>/scripts/<cli>/cli.mjs`） | `dsb` | `gmb` | `dbb` |
 | 定位 | 推理 + 联网搜索 | 生图 + 代码 Canvas | **生图 + 生视频** + 音乐/播客 |
 | 生图 | ✗ | ✓（2816×1536 原图） | ✓（2048×2048） |
 | 生视频 | ✗ | ✗ | ✓（1280×720） |
