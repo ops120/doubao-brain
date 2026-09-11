@@ -39,9 +39,16 @@
 | **多模型可选** | 快速（默认）/ 2.1 Turbo | `--model "2.1 Turbo"` |
 | **协作循环** | 规划 / 执行 / 复核的迭代协议 | `--protocol INIT\|EXECUTED` |
 
-> ⚠️ **生成类任务必须显式指定 `--capability`**。
+> ⚠️ **产物生成类任务必须显式指定 `--capability`**。
 > 不切能力时，豆包对「生成一张图」这类请求**只会回一段文字描述**，页面上不会真正渲染产物。
 > 这是本项目开发中验证过的坑，详见 [原理与已知坑](#原理与已知坑)。
+
+**能力分两类**（行为不同）：
+
+| 类型 | 能力 | 是否需要参数确认 | 是否产出文件 |
+| --- | --- | --- | --- |
+| **产物生成** | 图像生成 / 视频生成 / 音乐生成 / AI 播客 | 视频必现，其余视情况 | ✓ 下载到 `files[]` |
+| **文本模式** | 帮我写作 / 录音转写 | 通常不需要 | 转写可能产出文本文件 |
 
 ## 安装
 
@@ -61,6 +68,13 @@ git clone <repo-url> ~/.agents/skills/doubao-brain     # 通用 / ZCode
 ```
 
 装好后对 agent 说：**「用 doubao-brain 完成首次配置」**。
+
+> **关于命令写法**：本文档里的 `dbb <命令>` 是简写，等价于
+> `node "<skill-root>/scripts/dbb/cli.mjs" <命令>`，其中 `<skill-root>` 就是 clone 下来的仓库目录
+> （例如 `~/.agents/skills/doubao-brain`）。想用短命令就自己做个别名：
+> ```bash
+> alias dbb='node "$HOME/.agents/skills/doubao-brain/scripts/dbb/cli.mjs"'
+> ```
 
 ### 首次配置
 
@@ -91,6 +105,11 @@ node "<skill-root>/scripts/dbb/cli.mjs" ask --prompt "分析下这段代码" --m
 # 列出模型与能力
 node "<skill-root>/scripts/dbb/cli.mjs" list-models --json
 
+# 写检查点（session set 完整形态；protocol-state / waiting-for 只接受枚举值）
+#   --protocol-state: INIT | PLAN_RECEIVED | EXECUTING | EXECUTED_LOCAL | EXECUTED_SENT | DONE | BLOCKED
+#   --waiting-for:    none | BRAIN_PLAN | BRAIN_REVIEW | USER
+node "<skill-root>/scripts/dbb/cli.mjs" session set   --protocol-state PLAN_RECEIVED --waiting-for none --next-step "execute PLAN" --json
+
 # 生成图片
 node "<skill-root>/scripts/dbb/cli.mjs" ask \
   --prompt "一只布偶猫趴在窗台上晒太阳，油画风格" \
@@ -105,7 +124,10 @@ node "<skill-root>/scripts/dbb/cli.mjs" ask \
 node "<skill-root>/scripts/dbb/cli.mjs" ask --prompt "总结这份文档" --attach ./doc.pdf --json
 ```
 
-对 agent 说人话也一样：**「让豆包画一只猫」**、**「用豆包做个 15 秒的短视频」**。
+对 agent 说人话也一样：**「让豆包画一只猫」**、**「用豆包生成一段短视频」**。
+
+> 时长 / 比例等参数由豆包在生成前**列出并等你确认**（CLI 会自动确认），
+> 当前 CLI **不提供**指定时长的参数。
 
 ## 生成图片 / 视频（重点）
 
@@ -154,7 +176,7 @@ dbb ask --prompt "一只熊猫在竹林里啃竹子，阳光斑驳" --capability
 | `login` | 重新登录 | `--timeout <ms>` |
 | `logout` | 清除登录态 | — |
 | `doctor` | 体检 | `--deep`（真机探测页面/cookie/模型选择器）、`--html` |
-| `ask` | 提问 / 生成 | `--prompt` / `--prompt-file`、**`--capability`**、`--model`、`--attach`、`--thread`、`--auto-confirm`、`--no-download`、`--protocol`、`--timeout`、`--allow-sensitive`、`--allow-large` |
+| `ask` | 提问 / 生成 | `--prompt` / `--prompt-file`、**`--capability`**、`--model`、`--attach`、`--thread`、`--auto-confirm` / `--no-auto-confirm`、`--no-download`、`--protocol <状态>`、`--task <id>`、`--iteration <n>`、`--timeout`、`--allow-sensitive`、`--allow-large` |
 | `list-models` | 列出可用模型与能力栏 | — |
 | `thread` | 线程管理 | `status` / `use <url>` / `new` |
 | `session` | 工作区级线程与检查点 | `get` / `set --protocol-state --waiting-for --next-step ...` |
@@ -168,9 +190,21 @@ dbb ask --prompt "一只熊猫在竹林里啃竹子，阳光斑驳" --capability
 | 参数 | 默认 | 说明 |
 | --- | --- | --- |
 | `--capability <名称>` | 无 | **生成类必填**：`图像生成` / `视频生成` / `音乐生成` / `AI 播客` / `录音转写` / `帮我写作` |
-| `--auto-confirm` | `true` | 自动读取并回复豆包的参数确认 |
-| `--no-download` | `false` | 只提取 URL 不下载（调试用） |
+| `--auto-confirm` | `true` | 自动读取并回复豆包的参数确认。关闭方式：`--no-auto-confirm` 或 `--auto-confirm=false` |
+| `--no-download` | `false` | **完全跳过产物提取**：`files[]` 为空、`artifacts` 不报告（调试用） |
 | `--timeout <ms>` | `300000` | 视频建议 ≥ `900000` |
+
+### doctor 检查项
+
+| 检查项 | 含义 |
+| --- | --- |
+| `node` | Node 版本 ≥ 20 |
+| `deps` | `playwright-core` 已装到状态目录 |
+| `browser` | 找到可用的 Chromium 系浏览器（含走哪条探测路径） |
+| `stateDir` | 状态目录可写 |
+| `network` | 能访问站点（Node 直连失败不算死，会注明） |
+| `login` | **仅 `--deep` 时**：cookie 里有登录标志 |
+| `deep` | **仅 `--deep` 时**：真机探测页面状态 / 模型选择器 / 能力栏，并截图 |
 
 ## 返回值契约
 
@@ -194,7 +228,9 @@ dbb ask --prompt "一只熊猫在竹林里啃竹子，阳光斑驳" --capability
 
 **字段说明**：
 
-- `modes.model` —— **实际生效**的模型（从按钮读取，如「快速」「2.1 Turbo」）。与 `requested` 不一致时必须标注
+- `modes.model` —— **实际生效**的模型（从按钮读取，如「快速」「2.1 Turbo」）
+- `modes.requested` —— **仅指请求的模型**（`--model` 的值）；未指定时为 `null`
+- 二者不一致时必须标注；能力另由 `capability` / `capabilityRequested` 表示
 - `modes.capability` —— 实际生效的能力（生成类任务的关键字段）
 - `files[]` —— **已下载到本地的产物**绝对路径，带 `kind`（`video` / `image`）与 `contentType`
 - `artifacts` —— 页面上发现的产物计数（`videos` / `images`）
@@ -228,9 +264,11 @@ dbb thread status --json   # 查进度（checkpoint 自动落盘）
 | reason | 含义 | 动作 |
 | --- | --- | --- |
 | `LOGIN_REQUIRED` | 登录失效 | 停；让用户登录，一次一个动作 |
+| `HUMAN_VERIFICATION_REQUIRED` | 人机验证（豆包为**滑块 / 拖动验证**） | 停；用户在浏览器手动完成，一次一个动作 |
 | `RATE_LIMITED` | 限流 | 停；按 `retryAfterMs` 退避 |
 | `COMPOSER_NOT_FOUND` / `SITE_CHANGED` | 站点改版、选择器漂移 | **版本问题**：`doctor --deep` 定位，修 `src/site.mjs` 并发版 |
 | `SEND_FAILED` | 发送失败 | 重试一次 |
+| `INJECT_MISMATCH` | 注入到输入框的内容与预期长度偏差 > 10%（可能残留旧文本） | 检查是否清空失败；重试一次，仍失败按 `SITE_CHANGED` |
 | `STREAM_STALLED` | 流式停滞 / 超时 | 标注「可能截断」；生成类任务可给更长超时后重试 |
 | `UPLOAD_REJECTED` | 附件被拒 | 检查类型 / 大小 |
 | `THREAD_LOST` | 会话 404 | 新会话重问（或 HANDOFF） |
@@ -262,16 +300,17 @@ Linux    $XDG_STATE_HOME/doubao-brain/
 | --- | --- |
 | `deps/` | `playwright-core` |
 | `profile/` | 持久化浏览器 profile —— 登录态来源 |
-| `storage-state.json` | cookie 备份（第二重保险） |
+| `storage-state.json` | cookie 备份。**通常不依赖**（字节系 cookie 是持久型，profile 已够用），仅作为异常时的兼容手段 |
 | `downloads/<workspaceId>/` | **产物**：生成的图片、视频等 |
 | `threads/<workspaceId>.json` | 工作区级线程与检查点 |
 | `outputs/<workspaceId>.jsonl` | 审计：每次问答一行元数据 |
 | `logs/dbb.log` | 脱敏日志 |
-| `debug/` | 仅 `--debug` / 失败时保存的页面截图与 HTML |
+| `debug/` | 仅 `--debug` 或失败时保存的页面截图与 HTML —— ⚠️ **可能含回答正文与你的输入，未脱敏**，排障后建议删除 |
 
 **隐私要点**：
 
-- 状态目录权限 `0700`，文件 `0600`
+- 状态目录权限 `0700`、文件 `0600`（**仅 Unix/macOS 生效**；Windows 依赖用户目录 ACL）
+- **不要把状态目录同步 / 备份 / 分享** —— `profile/` 与 `storage-state.json` 含登录 cookie
 - **回答正文默认不落盘**，只记录元数据；**产物文件**按需落盘
 - cookie / storageState **永不**导出到项目目录、**永不**进日志、**永不**进 prompt
 - prompt 发往豆包服务器 —— 发送前经过确定性闸门（拒绝私钥、脱敏密钥与家目录路径）
@@ -418,8 +457,10 @@ scripts/dbb/
 | 模型可选 | ✗（只有思考/搜索开关） | ✓（Flash-Lite / Flash / Pro） | ✓（快速 / 2.1 Turbo） |
 | 登录持久化 | 简单 | 复杂（需三重保险） | 简单 |
 
-**加第四家怎么做**：复制本仓库，保留 `sanitize.mjs` / `session.mjs` / `logger.mjs` / `paths.mjs`
-四个核心文件（约 85% 代码可直接复用），只重写 `browser.mjs` 与 `site.mjs`。
+**加第四家怎么做**：复制本仓库，机制层文件可原样复用
+（`sanitize.mjs` / `session.mjs` / `logger.mjs` / `paths.mjs`），
+只需按站点重写 `browser.mjs`（登录持久化方式可能不同）与 `site.mjs`（选择器与交互流程）。
+**不能直接跑** —— 站点层是每个站点专属的。
 
 ## License
 

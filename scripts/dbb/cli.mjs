@@ -41,6 +41,7 @@ const { values: flags, positionals } = parseArgs({
     headless: { type: "boolean", default: false },
     capability: { type: "string" },
     "auto-confirm": { type: "boolean", default: true },
+    "no-auto-confirm": { type: "boolean", default: false },
     "no-download": { type: "boolean", default: false },
     "allow-sensitive": { type: "boolean", default: false },
     "allow-large": { type: "boolean", default: false },
@@ -181,7 +182,7 @@ async function waitLoginFlow({ timeoutMs }) {
       const shot = path.join(d.debug, `login-failed-${Date.now()}.png`);
       await page.screenshot({ path: shot }).catch(() => {});
       writeJson(d.prefs, { ...prefs, lastLoginCheckAt: nowIso() });
-      return { ok: false, reason: st?.challenge ? "CLOUDFLARE_CHALLENGE" : "LOGIN_REQUIRED", state: st, screenshot: shot };
+      return { ok: false, reason: st?.challenge ? "HUMAN_VERIFICATION_REQUIRED" : "LOGIN_REQUIRED", state: st, screenshot: shot };
     }
 
     // 登录成功：导出 storage_state（session cookie 的备份）
@@ -302,7 +303,7 @@ async function cmdDoctor() {
   if (deep && !deep.skipped) {
     if (deep.state.challenge) {
       ok = false;
-      reason = "CLOUDFLARE_CHALLENGE";
+      reason = "HUMAN_VERIFICATION_REQUIRED";
     } else if (deep.state.rateLimited) {
       ok = false;
       reason = "RATE_LIMITED";
@@ -379,7 +380,7 @@ async function cmdAsk() {
     await site.gotoSite(page, targetUrl);
 
     let st = await site.pageState(page);
-    if (st.challenge) return fail("CLOUDFLARE_CHALLENGE", "页面出现人机验证，请在浏览器里手动完成后重试。", { state: st });
+    if (st.challenge) return fail("HUMAN_VERIFICATION_REQUIRED", "页面出现人机验证，请在浏览器里手动完成后重试。", { state: st });
     const ck = await readLoginCookies(ctx);
     if (!ck.loggedIn) return fail("LOGIN_REQUIRED", "需要登录：请运行 dbb login 完成人工登录。", { state: st });
     if (st.rateLimited) return fail("RATE_LIMITED", "豆包 提示请求过于频繁，请稍后再试。", { retryAfterMs: 300000 });
@@ -477,7 +478,12 @@ async function cmdAsk() {
     // 阶段 2：豆包生成前会列参数要求确认（视频必现；图片有时）
     // 读它的回复内容，自动回复确认，然后重新等
     let confirmRounds = 0;
-    const wantConfirm = flags["auto-confirm"] !== false;
+    // 关闭自动确认的三种写法都要支持：
+    //   --no-auto-confirm
+    //   --auto-confirm=false   （parseArgs 对 boolean 类型会解析成字符串 "false"，需显式判断）
+    //   --auto-confirm false   （同上，也是字符串）
+    const wantConfirm =
+      flags["no-auto-confirm"] !== true && flags["auto-confirm"] !== false && String(flags["auto-confirm"]) !== "false";
     while (wantConfirm && confirmRounds < 2) {
       const check = await site.isAwaitingConfirmation(page);
       if (!check.awaiting) break;

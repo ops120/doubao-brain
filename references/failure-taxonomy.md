@@ -7,6 +7,7 @@
 | --- | --- | --- | --- |
 | `LOGIN_REQUIRED` | 登录失效 / 无登录 cookie | 停；让用户在浏览器完成登录（含 reCAPTCHA）；「好了」后重试 | 「豆包 需要重新登录，请在打开的浏览器里完成，好了叫我。」 |
 | `CHALLENGE` | 风控 / 滑块验证 | 同上；验证必须用户本人点 | 「碰到人机验证，请在浏览器里点一下。」 |
+| `HUMAN_VERIFICATION_REQUIRED` | 滑块 / 拖动验证 | 停；让用户在浏览器里手动完成；「好了」后重试 | 「碰到人机验证，请在浏览器里拖一下。」 |
 | `RATE_LIMITED` | 限流 | 停，按 `retryAfterMs` 退避 | 「豆包 提示请求过于频繁，建议 N 分钟后再试。」 |
 | `COMPOSER_NOT_FOUND` | 输入框定位失败 | `doctor --deep`；多半是改版 → 按 `SITE_CHANGED` | 不要把 DOM 细节讲给用户 |
 | `SITE_CHANGED` | 选择器漂移 | **版本问题**：`doctor --deep` 定位；告知维护者修 `scripts/dbb/src/site.mjs` 并发版。不要现场硬试 DOM | 「豆包 页面改版了，需要更新 doubao-brain。」 |

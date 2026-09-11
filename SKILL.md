@@ -148,6 +148,7 @@ node "<skill-root>/scripts/dbb/cli.mjs" ask --prompt "分析这个文件" --atta
 ## 何时打断用户（一次只给一个动作）
 
 - `LOGIN_REQUIRED`：登录失效。让用户在打开的浏览器里完成登录（手机号/扫码），等「好了」再继续。
+- `HUMAN_VERIFICATION_REQUIRED`：滑块 / 拖动验证。让用户在浏览器里手动拖一下，等「好了」再继续。
 - `RATE_LIMITED`：说明额度受限与建议等待。
 - 需要用户对敏感数据外发做决定（`SENSITIVE_BLOCKED`）。
 
