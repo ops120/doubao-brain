@@ -1,6 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 
+const { writeFileSync, mkdirSync } = fs;
+const ensureDir = (dir) => {
+  mkdirSync(dir, { recursive: true });
+  return dir;
+};
+
 /**
  * doubao.com 页面交互层
  *
@@ -432,12 +438,22 @@ export async function snapshotMarkers(page) {
  *   2. 未检测到停止按钮
  *   3. 若识别到生成请求，则要求其已结束
  */
-export async function waitForAnswer(page, { timeoutMs = 300000, pollMs = 2000, stableSamples = 3, completion = null, onPoll } = {}) {
+/**
+ * 等本次回答完成。
+ *
+ * 豆包是流式输出，但**生成类任务有两阶段**：
+ *   1. 先回一段文字（"正在生成图片" / "请先确认以下参数"）
+ *   2. 稍后才把产物（图片/视频）渲染进 DOM
+ * 所以文本稳定后，若发现它在说"生成中/已生成"而产物还没出现，
+ * 必须继续等产物，不能直接收工（实测踩过）。
+ */
+export async function waitForAnswer(page, { timeoutMs = 300000, pollMs = 2000, stableSamples = 3, completion = null, expectArtifact = false, artifactWaitMs = 180000, onPoll } = {}) {
   const started = Date.now();
   let last = "";
   let stable = 0;
   let sawText = false;
   let lastState = null;
+  let artifactDeadline = null;
 
   while (Date.now() - started < timeoutMs) {
     lastState = await page.evaluate(EXTRACT_FN).catch(() => null);
@@ -451,15 +467,35 @@ export async function waitForAnswer(page, { timeoutMs = 300000, pollMs = 2000, s
       else stable = 0;
       last = t;
 
+      const artifacts = await page
+        .evaluate(() => ({
+          videos: document.querySelectorAll("video").length,
+          images: [...document.querySelectorAll("img")].filter(
+            (i) => i.naturalWidth >= 512 && !i.src.startsWith("data:")
+          ).length,
+        }))
+        .catch(() => ({ videos: 0, images: 0 }));
+
+      const textWantsArtifact = /正在生成|生成中|请稍候|马上|正在为你生成/.test(t);
+      const artifactPresent = artifacts.videos > 0 || artifacts.images > 0;
+
       onPoll?.({
         len: t.length,
         stable,
-        stop: lastState.stopVisible,
         net: `${cs.seen ? "seen" : "-"}/${cs.done ? "done" : cs.failed ? "failed" : "-"}`,
+        artifacts: `${artifacts.videos}v/${artifacts.images}i`,
       });
 
       if (sawText && t.length > 0 && stable >= stableSamples && !lastState.stopVisible && netIdle) {
-        return { ok: true, ...lastState, elapsedMs: Date.now() - started };
+        const wantsArtifact = expectArtifact || textWantsArtifact || /已生成|生成完成/.test(t);
+        if (wantsArtifact && !artifactPresent) {
+          if (artifactDeadline === null) artifactDeadline = Date.now() + artifactWaitMs;
+          if (Date.now() < artifactDeadline) {
+            await page.waitForTimeout(pollMs);
+            continue;
+          }
+        }
+        return { ok: true, ...lastState, artifacts, elapsedMs: Date.now() - started };
       }
     }
     await page.waitForTimeout(pollMs);
@@ -497,48 +533,6 @@ export async function openConversation(page, keyword) {
   return res;
 }
 
-/** 下载产物（图片等）：点下载按钮，捕获 download 事件 */
-export async function downloadArtifact(page, outDir, { timeoutMs = 60000 } = {}) {
-  const buttons = await page.evaluate(() =>
-    [...document.querySelectorAll("button, [role=button]")]
-      .map((b) => {
-        const r = b.getBoundingClientRect();
-        return {
-          label: `${b.getAttribute("aria-label") ?? ""} ${b.getAttribute("title") ?? ""} ${(b.innerText || "").trim()}`.trim(),
-          visible: r.width > 0 && r.height > 0,
-          x: Math.round(r.x + r.width / 2),
-          y: Math.round(r.y + r.height / 2),
-        };
-      })
-      .filter((b) => b.visible && /下载|download|保存/i.test(b.label))
-  );
-  if (!buttons.length) return { ok: false, reason: "NOT_FOUND", message: "页面上没有下载按钮" };
-
-  const btn = buttons[0];
-  const saved = [];
-  const onDownload = async (d) => {
-    try {
-      const file = path.join(outDir, d.suggestedFilename());
-      await d.saveAs(file);
-      saved.push({ file, suggested: d.suggestedFilename(), bytes: fs.statSync(file).size });
-    } catch (error) {
-      saved.push({ ok: false, error: String(error).slice(0, 150) });
-    }
-  };
-  page.on("download", onDownload);
-  try {
-    await page.mouse.click(btn.x, btn.y);
-    const started = Date.now();
-    while (Date.now() - started < timeoutMs) {
-      await page.waitForTimeout(800);
-      if (saved.length) break;
-    }
-  } finally {
-    page.off("download", onDownload);
-  }
-  return saved.length ? { ok: true, label: btn.label, files: saved } : { ok: false, reason: "SEND_FAILED", message: "点击下载后没有触发下载事件" };
-}
-
 /** 读取能力栏（对话 / 视频生成 / 图像生成 / 帮我写作 / 音乐生成 / AI 播客 / 录音转写） */
 export async function readCapabilities(page) {
   return page.evaluate(() => {
@@ -548,4 +542,246 @@ export async function readCapabilities(page) {
       .filter((t) => known.includes(t));
     return [...new Set(hits)];
   });
+}
+
+/** 当前选中的能力（豆包用高亮/勾选标记） */
+export async function readActiveCapability(page) {
+  return page.evaluate(() => {
+    const known = ["对话", "视频生成", "图像生成", "帮我写作", "音乐生成", "AI 播客", "录音转写"];
+    // 已选中的能力通常是「标签」形态（带 × 号），或带高亮类
+    const tagged = [...document.querySelectorAll("*")]
+      .filter((e) => {
+        const t = (e.innerText || "").trim();
+        return known.some((k) => t === `${k} ×` || t === `${k}×` || t.startsWith(`${k}\n×`));
+      })
+      .map((e) => (e.innerText || "").trim().replace(/\s*×\s*$/, ""));
+    if (tagged.length) return tagged[tagged.length - 1];
+    // 兜底：高亮类
+    const active = [...document.querySelectorAll("*")]
+      .filter((e) => {
+        const cls = typeof e.className === "string" ? e.className : "";
+        const t = (e.innerText || "").trim();
+        return known.includes(t) && /active|selected|primary|bg-\[|bg-primary/i.test(cls);
+      })
+      .map((e) => (e.innerText || "").trim());
+    return active[active.length - 1] ?? null;
+  });
+}
+
+/**
+ * 切换能力（图像生成 / 视频生成 / 帮我写作 / 音乐生成 / AI 播客 / 录音转写）。
+ *
+ * ⚠️ 关键：不切能力的话，豆包对「生成图片」之类的请求只会**回一段文字描述**，
+ *    页面上不会真正渲染图片/视频（实测踩过）。
+ * 切换后输入框区域会出现该能力的参数面板（如视频：模型 + 时长）。
+ */
+export async function setCapability(page, capability) {
+  if (!capability) return { ok: true, switched: false, active: await readActiveCapability(page) };
+
+  const before = await readActiveCapability(page);
+  if (before === capability) return { ok: true, switched: false, before, after: before };
+
+  const clicked = await page.evaluate((label) => {
+    const hits = [...document.querySelectorAll("button,[role=button],[class*='cursor-pointer'],div,span")]
+      .filter((e) => (e.innerText || "").trim() === label && e.getBoundingClientRect().width > 8);
+    if (!hits.length) return { ok: false, reason: "NOT_FOUND" };
+    // 取最内层元素，再向上找可点击祖先
+    const el = hits[hits.length - 1];
+    const target = el.closest("button,[role=button],[class*='cursor-pointer']") ?? el;
+    target.click();
+    return { ok: true };
+  }, capability);
+
+  if (!clicked.ok) return { ok: false, reason: "NOT_FOUND", message: `能力栏里没有「${capability}」` };
+  await page.waitForTimeout(3000);
+  const after = await readActiveCapability(page);
+  return { ok: true, switched: true, before, after: after ?? capability };
+}
+
+/* ------------------------------- 参数确认流程 ------------------------------- */
+
+/** 待确认关键词（豆包生成视频/图片前会列参数要求确认） */
+const CONFIRM_PATTERNS = [
+  /请.{0,8}确认/,
+  /确认后.{0,8}(开始|生成)/,
+  /是否确认/,
+  /参数确认/,
+  /请确认以下/,
+  /确认以下参数/,
+];
+
+/** 读取最后一条模型回答的文本 */
+export async function readLastAnswer(page) {
+  return page.evaluate(() => {
+    const visible = (el) => !!el && el.getClientRects().length > 0;
+    const items = [...document.querySelectorAll('[class*="inner-item"]')].filter(visible);
+    const isAnswer = (el) =>
+      el.querySelectorAll("div.grid").length > 0 ||
+      el.querySelectorAll('[class*="message-action-bar"], [class*="suggest-message"]').length > 0;
+    const answers = items.filter(isAnswer);
+    const scope = answers[answers.length - 1];
+    return scope ? (scope.innerText || "").replace(/\s+/g, " ").trim() : "";
+  });
+}
+
+/** 判断最后一条回答是否在等确认 */
+export async function isAwaitingConfirmation(page) {
+  const text = await readLastAnswer(page);
+  return { awaiting: CONFIRM_PATTERNS.some((re) => re.test(text)), text };
+}
+
+/** 读取生成耗时预告（豆包会说「预计等待 10 分钟」） */
+export async function readEta(page) {
+  const text = await readLastAnswer(page);
+  const m = text.match(/预计.{0,6}等待\s*(\d+)\s*(秒|分钟)/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return { raw: m[0], ms: m[2] === "分钟" ? n * 60000 : n * 1000 };
+}
+
+/* ------------------------------- 产物提取与下载 ------------------------------- */
+
+/**
+ * 产物 URL 的域名特征。
+ * 都是字节系 CDN，且**域名会轮换**（实测见过三种）：
+ *   图片: p3-flow-imagex-sign.byteimg.com
+ *   视频: v9-default.douyin.com / v26-vdl.doubao.com
+ * 所以用宽匹配。
+ */
+const ARTIFACT_HOST_RE = /byteimg\.com|douyin\.com|doubao\.com|doubaocdn|byteacctimg|flow-imagex|zijieapi|snssdk|bytecdn/i;
+
+/**
+ * 从页面提取产物 URL。
+ * - 图片：`<img src="...byteimg.com...">`
+ * - 视频：`<video src="...douyin.com...">`
+ * ⚠️ 都是**签名链接会过期**，必须当次提取当次下载，不能缓存 URL 稍后再取。
+ */
+export async function extractArtifacts(page, { autoScroll = true } = {}) {
+  if (autoScroll) {
+    // ⚠️ 豆包的视频播放器是**点击后才初始化**的：
+    //   <div class="video-player-NmhH16"></div> 初始是空的，<video> 不存在。
+    //   必须点一下播放按钮，播放器才会挂载 <video> 并暴露 src。
+    //   （另有封面图 <img class="cover-..."> 指向 aka.doubaocdn.com）
+    await page
+      .evaluate(async () => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        // 找所有还没初始化的视频块（有 video-player 容器但没有 video 元素）
+        const wrappers = [...document.querySelectorAll('[class*="video-player-wrapper"]')];
+        for (const w of wrappers) {
+          if (w.querySelector("video")) continue;
+          // 优先点播放按钮，其次点容器本身
+          const playBtn =
+            w.parentElement?.querySelector('[class*="play-icon"], [class*="play-button"]') ??
+            w.parentElement?.querySelector("button") ??
+            w;
+          try {
+            playBtn.click();
+            await sleep(1200);
+          } catch {
+            /* ignore */
+          }
+        }
+        // 若仍无 video，再尝试滚动触发
+        if (!document.querySelector("video")) {
+          for (let i = 0; i < 10; i++) {
+            const sc = [...document.querySelectorAll("div")].find(
+              (el) => el.scrollHeight > el.clientHeight + 50 && el.clientHeight > 250 && /scroller|scroll-area|flow-scrollbar/i.test(String(el.className))
+            );
+            if (sc) sc.scrollTop = sc.scrollHeight;
+            else window.scrollBy(0, Math.max(400, window.innerHeight * 0.8));
+            await sleep(300);
+          }
+        }
+        await sleep(1000);
+      })
+      .catch(() => {});
+    await page.waitForTimeout(2000);
+  }
+  return page.evaluate(() => {
+    const pickSrc = (v) => v.src || v.currentSrc || v.querySelector?.("source")?.src || "";
+    const videos = [...document.querySelectorAll("video")]
+      .map((v) => ({
+        kind: "video",
+        url: pickSrc(v),
+        dims: `${v.videoWidth}x${v.videoHeight}`,
+        durationSec: Number.isFinite(v.duration) ? Math.round(v.duration * 100) / 100 : null,
+        poster: v.poster || null,
+        player: (() => {
+          const p = v.closest('[class*="xgplayer"], [class*="video-player"]');
+          return p ? String(p.className).split(/\s+/)[0] : null;
+        })(),
+      }))
+      .filter((v) => v.url);
+    const images = [...document.querySelectorAll("img")]
+      .filter((i) => i.naturalWidth >= 512 && !i.src.startsWith("data:"))
+      .map((i) => ({ kind: "image", url: i.src, dims: `${i.naturalWidth}x${i.naturalHeight}` }))
+      .filter((i) => i.url);
+    return { videos, images };
+  });
+}
+
+/** 过滤出真正的生成产物（排除头像、图标等） */
+export function filterArtifacts(artifacts) {
+  const isArtifact = (url) => {
+    if (!ARTIFACT_HOST_RE.test(url)) return false;
+    if (/avatar|user-avatar|\/icon\/|intro\.|static\/image|sparkle/i.test(url)) return false;
+    // 封面图（aka.doubaocdn.com/s/xxx 无扩展名）不是产物本体，视频以 <video> 为准
+    if (/doubaocdn\.com\/s\//.test(url)) return false;
+    return true;
+  };
+  return {
+    videos: artifacts.videos.filter((v) => isArtifact(v.url)),
+    images: artifacts.images.filter((i) => isArtifact(i.url)),
+  };
+}
+
+/**
+ * 用 Node 直接下载产物（不经过浏览器 UI）。
+ *
+ * 为什么不用 UI 的「下载原图」按钮：
+ *   - 按钮只在 hover 时渲染，不稳定
+ *   - 右键菜单能触发 download 事件，但 Playwright 的 saveAs 有竞态
+ *   - 而图片/视频本身是**签名 HTTP URL**，直接请求即可拿到服务器原文件
+ */
+export async function downloadArtifactsByUrl(urls, outDir, cookieHeader, { referer = "https://www.doubao.com/" } = {}) {
+  ensureDir(outDir);
+  const saved = [];
+  for (const [i, item] of urls.entries()) {
+    const url = typeof item === "string" ? item : item.url;
+    const kind = typeof item === "string" ? "artifact" : item.kind;
+    try {
+      const res = await fetch(url, {
+        headers: {
+          "user-agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/151.0.0.0 Safari/537.36",
+          referer,
+          ...(cookieHeader ? { cookie: cookieHeader } : {}),
+        },
+        signal: AbortSignal.timeout(120000),
+      });
+      if (!res.ok) {
+        saved.push({ ok: false, kind, url: url.slice(0, 100), status: res.status });
+        continue;
+      }
+      const buf = Buffer.from(await res.arrayBuffer());
+      const ct = res.headers.get("content-type") ?? "";
+      const ext = ct.includes("mp4")
+        ? "mp4"
+        : ct.includes("webm")
+          ? "webm"
+          : ct.includes("png")
+            ? "png"
+            : ct.includes("jpeg") || ct.includes("jpg")
+              ? "jpg"
+              : ct.includes("webp")
+                ? "webp"
+                : "bin";
+      const file = path.join(outDir, `doubao-${kind}-${Date.now()}-${i}.${ext}`);
+      writeFileSync(file, buf);
+      saved.push({ ok: true, kind, file, bytes: buf.length, contentType: ct });
+    } catch (error) {
+      saved.push({ ok: false, kind, url: url.slice(0, 100), error: String(error).slice(0, 150) });
+    }
+  }
+  return saved;
 }

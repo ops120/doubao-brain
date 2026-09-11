@@ -39,6 +39,9 @@ const { values: flags, positionals } = parseArgs({
     html: { type: "boolean", default: false },
     debug: { type: "boolean", default: false },
     headless: { type: "boolean", default: false },
+    capability: { type: "string" },
+    "auto-confirm": { type: "boolean", default: true },
+    "no-download": { type: "boolean", default: false },
     "allow-sensitive": { type: "boolean", default: false },
     "allow-large": { type: "boolean", default: false },
     "keep-open": { type: "boolean", default: false },
@@ -409,6 +412,24 @@ async function cmdAsk() {
       }
     }
 
+    // 能力切换（图像生成 / 视频生成 / …）
+    // ⚠️ 关键：不切能力，豆包对「生成图片」类请求只会回一段文字描述，
+    //    页面上不会真正渲染产物（实测踩过）。
+    let capabilityRes = { ok: true, switched: false, active: null, after: null };
+    if (flags.capability) {
+      capabilityRes = await site.setCapability(page, String(flags.capability));
+      if (!capabilityRes.ok) {
+        return fail(
+          capabilityRes.reason ?? "SITE_CHANGED",
+          capabilityRes.message ?? `无法切换到能力「${flags.capability}」`
+        );
+      }
+      log("info", `能力切换: ${JSON.stringify(capabilityRes)}`);
+      await page.waitForTimeout(2000);
+    } else {
+      capabilityRes.active = await site.readActiveCapability(page);
+    }
+
     // 附件上传（豆包 用隐藏 input[type=file]）
     if (flags.attach) {
       const files = String(flags.attach).split(",").map((s) => s.trim()).filter(Boolean);
@@ -433,11 +454,93 @@ async function cmdAsk() {
     const sent = await site.sendPrompt(page);
     if (!sent.ok) return fail(sent.reason, sent.message);
 
-    const ans = await site.waitForAnswer(page, {
-      timeoutMs,
+    const GENERATIVE = /图像生成|视频生成|音乐生成|AI 播客|录音转写/;
+    const expectArtifact = GENERATIVE.test(String(flags.capability ?? capabilityRes.active ?? ""));
+
+    // 阶段 1：先只等**文字**回复（不等产物）—— 因为豆包可能先要求确认参数，
+    //         一味等产物会浪费时间（实测踩过：文本稳定 177 字，脚本还在傻等产物）
+    let ans = await site.waitForAnswer(page, {
+      timeoutMs: Math.min(timeoutMs, 180000),
       completion,
-      onPoll: (info) => log("debug", "waitForAnswer poll", info),
+      expectArtifact: false,
+      onPoll: (info) => log("debug", "waitForAnswer poll (stage1/text)", info),
     });
+
+    // 先看回复说了什么（不傻等产物）
+    {
+      const said = await site.readLastAnswer(page);
+      log("info", `豆包回复: ${said.slice(0, 400)}`);
+      if (flags.json) process.stderr.write(`  豆包回复: ${said.slice(0, 200)}
+`);
+    }
+
+    // 阶段 2：豆包生成前会列参数要求确认（视频必现；图片有时）
+    // 读它的回复内容，自动回复确认，然后重新等
+    let confirmRounds = 0;
+    const wantConfirm = flags["auto-confirm"] !== false;
+    while (wantConfirm && confirmRounds < 2) {
+      const check = await site.isAwaitingConfirmation(page);
+      if (!check.awaiting) break;
+      confirmRounds += 1;
+      const eta = await site.readEta(page);
+      log("info", `豆包要求确认参数（第 ${confirmRounds} 轮）${eta ? `，预计等待 ${eta.raw}` : ""}`);
+      if (flags.json) {
+        process.stderr.write(`  豆包要求确认参数${eta ? `（${eta.raw}）` : ""}，自动回复「确认」…
+`);
+      }
+      const inj = await site.injectPrompt(page, "确认，开始生成");
+      if (!inj.ok) break;
+      await page.waitForTimeout(600);
+      await page.keyboard.press("Enter");
+      // 重新等待（这次是真正的生成）
+      completion.reset();
+      const waitMs = eta?.ms ? Math.min(timeoutMs, Math.max(timeoutMs, eta.ms + 120000)) : timeoutMs;
+      ans = await site.waitForAnswer(page, {
+        timeoutMs: waitMs,
+        completion,
+        onPoll: (info) => log("debug", "waitForAnswer poll (after confirm)", info),
+      });
+    }
+    // 阶段 3：生成类任务 —— 等产物。
+    //
+    // 豆包有两类行为，都要覆盖：
+    //   A. 同步型（图片）：确认后很快在同一轮回复里渲染出图
+    //   B. 异步型（视频）：回复「预计等待 N 分钟…生成好后我会主动发送给你」，
+    //      然后**过几分钟自己 push 一条新消息**到会话里
+    // 所以这里循环：定期提取产物；没有就继续等（同时读它的新回复）。
+    if (expectArtifact) {
+      const said = await site.readLastAnswer(page);
+      const eta = await site.readEta(page);
+      const asyncHint = /主动发送|生成好后|稍后发送/.test(said);
+      const budget = eta?.ms ? eta.ms + 180000 : asyncHint ? 900000 : 300000;
+      log("info", `等产物：${asyncHint ? "异步推送型" : "同步型"}${eta ? `，eta=${eta.raw}` : ""}，预算 ${Math.round(budget / 1000)}s`);
+
+      const deadline = Date.now() + budget;
+      let found = null;
+      let lastSeenText = said;
+      while (Date.now() < deadline) {
+        await page.waitForTimeout(8000);
+        const raw = await site.extractArtifacts(page);
+        const filtered = site.filterArtifacts(raw);
+        if (filtered.videos.length || filtered.images.length) {
+          found = filtered;
+          break;
+        }
+        // 读有没有新回复（异步推送）
+        const nowText = await site.readLastAnswer(page);
+        if (nowText && nowText !== lastSeenText) {
+          lastSeenText = nowText;
+          log("info", `豆包新回复: ${nowText.slice(0, 200)}`);
+          if (flags.json) process.stderr.write(`  豆包: ${nowText.slice(0, 120)}
+`);
+        }
+      }
+      if (found) {
+        log("info", `产物已就绪: ${found.videos.length} 视频 / ${found.images.length} 图片`);
+      } else {
+        log("warn", "产物等待超时（异步任务可能仍在队列中）");
+      }
+    }
     completion.dispose();
 
     if (flags.debug || !ans.ok) {
@@ -447,12 +550,28 @@ async function cmdAsk() {
       else if (flags.debug) process.stderr.write(`调试 HTML：${file}\n`);
     }
 
-    // 有下载按钮 → 取产物（图片/代码/SVG 的原始文件）
+    // 产物提取与下载（图片 byteimg / 视频 douyin CDN）
+    // 说明：这些是**签名 URL 会过期**，所以必须当次提取当次下载；不复用旧 URL。
     let files = [];
-    if (ans.downloadLabel) {
-      const dl = await site.downloadArtifact(page, downloadsDir);
-      if (dl.ok) files = dl.files;
-      log("info", `产物下载: ${JSON.stringify(dl).slice(0, 200)}`);
+    let artifactsSeen = { videos: 0, images: 0 };
+    if (!flags["no-download"]) {
+      const raw = await site.extractArtifacts(page, { autoScroll: false });
+      const filtered = site.filterArtifacts(raw);
+      artifactsSeen = { videos: filtered.videos.length, images: filtered.images.length };
+      if (artifactsSeen.videos || artifactsSeen.images) {
+        const cookieHeader = (await ctx.cookies())
+          .map((c) => `${c.name}=${c.value}`)
+          .join("; ");
+        const targets = [
+          ...filtered.videos.map((v) => ({ kind: "video", url: v.url, meta: v })),
+          ...filtered.images.map((i) => ({ kind: "image", url: i.url, meta: i })),
+        ];
+        const downloaded = await site.downloadArtifactsByUrl(targets, downloadsDir, cookieHeader);
+        files = downloaded.filter((d) => d.ok).map((d) => ({ file: d.file, bytes: d.bytes, kind: d.kind, contentType: d.contentType }));
+        const failed = downloaded.filter((d) => !d.ok);
+        log("info", `产物下载: ${files.length} 成功, ${failed.length} 失败`);
+        if (failed.length) process.stderr.write(`  部分产物下载失败（签名 URL 可能已过期）：${failed.length} 个\n`);
+      }
     }
 
     if (!ans.ok && !ans.text && !files.length) {
@@ -494,9 +613,16 @@ async function cmdAsk() {
       ok: true,
       requestId,
       threadUrl,
-      modes: { model: modelRes.after, requested: flags.model ?? null },
+      modes: {
+        model: modelRes.after,
+        requested: flags.model ?? null,
+        capability: capabilityRes.after ?? capabilityRes.active ?? null,
+        capabilityRequested: flags.capability ?? null,
+      },
       text: ans.text ?? "",
       files,
+      artifacts: artifactsSeen.videos || artifactsSeen.images ? artifactsSeen : undefined,
+      confirmRounds: confirmRounds || undefined,
       mode: ans.mode ?? (files.length ? "artifact" : "chat"),
       truncated: !ans.ok,
       elapsedMs: ans.elapsedMs ?? Date.now() - startedAt,
@@ -616,8 +742,10 @@ function usage() {
   setup                 首次配置：装依赖 → 打开浏览器 → 人工登录一次
   login / logout        重新登录 / 清除登录态
   doctor [--deep] [--html]   体检（--deep 真机探测页面、cookie 与模型选择器）
-  ask --prompt-file f [--model Pro] [--attach a.png,b.pdf] [--thread new|<url>] [--json]
-  list-models           列出可用模型（豆包：快速 / 深度思考 等）
+  ask --prompt-file f [--capability 图像生成|视频生成|...] [--model 2.1 Turbo]
+      [--attach a.png,b.pdf] [--thread new|<url>] [--no-download] [--json]
+  list-models           列出可用模型与能力栏
+  capabilities          列出能力栏可选值
   thread status|use <url>|new
   session get|set [...]      工作区线程与 checkpoint
   logs [-n 50] [--verbose]

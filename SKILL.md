@@ -69,6 +69,25 @@ node "<skill-root>/scripts/dbb/cli.mjs" doctor --json
 node "<skill-root>/scripts/dbb/cli.mjs" ask --prompt-file <临时文件> --json
 ```
 
+### 生成图片 / 视频（必须指定能力）
+
+```bash
+node "<skill-root>/scripts/dbb/cli.mjs" ask   --prompt "一只柴犬坐在樱花树下，水彩插画风格" --capability "图像生成" --thread new --json
+
+node "<skill-root>/scripts/dbb/cli.mjs" ask   --prompt "一只熊猫在竹林里啃竹子，阳光斑驳" --capability "视频生成" --timeout 900000 --json
+```
+
+**关键规则**：
+
+1. **不指定 `--capability` 就不会出产物**——豆包只会回一段文字描述。
+   图像生成 / 视频生成 / 音乐生成 / AI 播客 / 录音转写，都要显式指定。
+2. **视频会先要求确认参数**：CLI 会自动读取并回复「确认」（`--auto-confirm` 默认开）。
+3. **视频是异步的**：豆包回复「预计等待 10 分钟…生成好后我会主动发送给你」，
+   完成后 push 一条新消息。CLI 会按 ETA 轮询等待（实测约 3 分钟）。
+   因此视频任务要用更长的 `--timeout`（建议 ≥ 900000）。
+4. **产物自动下载到本地**，`files[]` 给绝对路径。
+   这些是**签名 URL 会过期**，所以必须当次提取当次下载。
+
 ### 指定模型
 
 ```bash
