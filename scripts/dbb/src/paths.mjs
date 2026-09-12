@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 
-export const VERSION = "3.0.0";
+export const VERSION = "3.0.1";
 export const SERVICE = "dbb-cli";
 
 export function stateDir() {

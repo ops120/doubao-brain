@@ -11,6 +11,7 @@
 | `RATE_LIMITED` | 限流 | 停，按 `retryAfterMs` 退避 | 「豆包 提示请求过于频繁，建议 N 分钟后再试。」 |
 | `COMPOSER_NOT_FOUND` | 输入框定位失败 | `doctor --deep`；多半是改版 → 按 `SITE_CHANGED` | 不要把 DOM 细节讲给用户 |
 | `SITE_CHANGED` | 选择器漂移 | **版本问题**：`doctor --deep` 定位；告知维护者修 `scripts/dbb/src/site.mjs` 并发版。不要现场硬试 DOM | 「豆包 页面改版了，需要更新 doubao-brain。」 |
+| `POPUP_BLOCKING` | 页面弹窗遮挡输入/发送，白名单关闭控件未命中 | 停；请用户手动关弹窗后重试；反复出现提 issue | 「页面有个弹窗我关不掉，麻烦你手动关一下再叫我。」 |
 | `SEND_FAILED` | 发送失败 | 重试一次；仍失败按 `SITE_CHANGED` | — |
 | `STREAM_STALLED` | 流式停滞 / 超时 | 已捕获内容标注「可能截断」；生图类可重试（耗时较长属正常） | 「回答可能不完整。」 |
 | `UPLOAD_REJECTED` | 附件被拒 | 检查类型 / 大小；`connectOverCDP` 模式有 50MB 限制 | 「这个文件网页版收不了，换一个或压缩后再试。」 |

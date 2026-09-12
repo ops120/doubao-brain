@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { dirs } from "./paths.mjs";
 
 const { writeFileSync, mkdirSync } = fs;
 const ensureDir = (dir) => {
@@ -66,6 +67,76 @@ export async function gotoSite(page, url = SITE_URL) {
   await page.waitForTimeout(3500);
 }
 
+/* --------------------------------- 弹窗处理 --------------------------------- */
+
+/**
+ * 关闭遮挡页面的弹窗（2026-09-12 首屏「下载电脑版」促销弹窗实测）：
+ * radix dialog（`[data-slot="dialog-content"]`）盖住整页，Playwright 对编辑器的
+ * 可见点击会被 overlay 拦截（"intercepts pointer events"），且 **Esc 关不掉**。
+ *
+ * 安全约束：只点**白名单关闭控件**——`aria-label="关闭"` 的按钮，或文案精确命中
+ * 「下次提醒我 / 我知道了 / …」的按钮；绝不点「下载 / 同意 / 登录」类动作按钮。
+ * 未命中白名单时如实返回 remaining，由调用方报 POPUP_BLOCKING，不瞎点。
+ */
+const DIALOG_SEL = '[data-slot="dialog-content"][data-state="open"], [role="dialog"][data-state="open"]';
+const CLOSE_ARIA_SOURCE = "^(关闭|close)$";
+const DISMISS_TEXT_SOURCE = "^(下次提醒我|下次再说|以后再说|暂不需要|暂不提醒|我知道了|知道了|跳过|关闭|取消)$";
+
+/** 失败留证：弹窗关不掉时把整页截图存进 debug/（人工可看图定位是哪种弹窗） */
+async function shotDebug(page, tag) {
+  try {
+    const file = path.join(ensureDir(dirs().debug), `${tag}-${Date.now()}.png`);
+    await page.screenshot({ path: file });
+    return file;
+  } catch {
+    return null;
+  }
+}
+
+export async function dismissBlockingDialogs(page, { rounds = 6, waitMs = 900 } = {}) {
+  let sawDialog = false;
+  const methods = [];
+  for (let i = 0; i < rounds; i++) {
+    const hit = await page.evaluate(
+      ([dlgSel, ariaSrc, textSrc]) => {
+        const dlgs = [...document.querySelectorAll(dlgSel)].filter((e) => e.getClientRects().length);
+        if (dlgs.length === 0) return { found: false };
+        const aria = new RegExp(ariaSrc, "i");
+        const text = new RegExp(textSrc);
+        for (const d of dlgs) {
+          const visible = (b) => b.getClientRects().length > 0;
+          const btn =
+            [...d.querySelectorAll("button")].find((b) => visible(b) && aria.test((b.getAttribute("aria-label") ?? "").trim())) ??
+            [...d.querySelectorAll("button")].find((b) => visible(b) && text.test((b.innerText || "").trim()));
+          if (btn) {
+            const label = (btn.getAttribute("aria-label") ?? btn.innerText ?? "").trim().slice(0, 12);
+            btn.click(); // 页内合成点击：同 newThread 的既有做法，React 合成事件可正常响应
+            return { found: true, label };
+          }
+        }
+        return { found: true, label: null };
+      },
+      [DIALOG_SEL, CLOSE_ARIA_SOURCE, DISMISS_TEXT_SOURCE]
+    );
+    if (!hit?.found) break;
+    sawDialog = true;
+    if (hit.label === null) {
+      // 有弹窗但没（还没水合出）白名单控件 —— 等一等再找，不瞎点、不轻易放弃
+      await page.waitForTimeout(waitMs);
+      continue;
+    }
+    methods.push(hit.label);
+    await page.waitForTimeout(waitMs); // 等关闭动画（data-state → closed / DOM 移除），多层弹窗继续下一轮
+  }
+  const remaining = await page.evaluate(
+    (sel) => [...document.querySelectorAll(sel)].filter((e) => e.getClientRects().length).length,
+    DIALOG_SEL
+  );
+  const stuck = sawDialog && remaining > 0;
+  const screenshot = stuck ? await shotDebug(page, "popup-blocking") : null;
+  return { found: sawDialog, dismissed: methods.length, methods, remaining, screenshot };
+}
+
 /** 等输入框就绪（登录判定必须看 cookie，不看界面） */
 export async function waitForEditor(page, { timeoutMs = 1800000, pollMs = 3000, onTick } = {}) {
   const started = Date.now();
@@ -91,9 +162,22 @@ export async function waitForEditor(page, { timeoutMs = 1800000, pollMs = 3000, 
  *   - 直接设 innerHTML 会绕过框架的状态管理
  */
 export async function injectPrompt(page, text) {
+  // ⓪ 弹窗（首屏或中途出现）会盖住编辑器拦截点击 —— 先清一次，点击被拦再兜底
+  await dismissBlockingDialogs(page);
   const editor = page.locator('[contenteditable="true"]').first();
   await editor.waitFor({ state: "visible", timeout: 20000 });
-  await editor.click();
+  try {
+    await editor.click({ timeout: 15000 });
+  } catch (error) {
+    const dlg = await dismissBlockingDialogs(page);
+    if (!dlg.dismissed) {
+      throw Object.assign(
+        new Error(`编辑器被页面弹窗遮挡且无法自动关闭（可见弹窗 ${dlg.remaining ?? 1} 个${dlg.screenshot ? `，截图 ${dlg.screenshot}` : ""}）`),
+        { code: "POPUP_BLOCKING", screenshot: dlg.screenshot }
+      );
+    }
+    await editor.click({ timeout: 15000 });
+  }
   await page.waitForTimeout(300);
 
   // ① 清空编辑器（全选 + 删除，走框架认可的方式）
@@ -158,6 +242,14 @@ export async function injectPrompt(page, text) {
 }
 
 export async function sendPrompt(page) {
+  // 坐标点击会点到弹窗 overlay 上（消息没发出去却以为发了）—— 发送前先清弹窗
+  const dlg = await dismissBlockingDialogs(page);
+  if (dlg.remaining > 0) {
+    throw Object.assign(
+      new Error(`发送按钮被页面弹窗遮挡且无法自动关闭${dlg.screenshot ? `（截图 ${dlg.screenshot}）` : ""}`),
+      { code: "POPUP_BLOCKING", screenshot: dlg.screenshot }
+    );
+  }
   await page.locator('[contenteditable="true"]').first().press("Enter");
   await page.waitForTimeout(2000);
   // 兜底：找发送按钮（aria 可能是「发送」或图标按钮）

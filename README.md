@@ -385,6 +385,7 @@ node "$SKILL_ROOT/scripts/dbb/cli.mjs" thread status --json   # 查进度（chec
 | `HUMAN_VERIFICATION_REQUIRED` | 人机验证（豆包为**滑块 / 拖动验证**） | 停；用户在浏览器手动完成，一次一个动作 |
 | `RATE_LIMITED` | 限流 | 停；按 `retryAfterMs` 退避 |
 | `COMPOSER_NOT_FOUND` / `SITE_CHANGED` | 站点改版、选择器漂移 | **版本问题**：先 `doctor --deep` 确认；普通用户提 issue 等上游发版即可，`scripts/dbb/src/site.mjs` 的修改面向维护者 |
+| `POPUP_BLOCKING` | 页面弹窗遮挡输入/发送，且白名单关闭控件未命中 | 人工关闭弹窗后重跑；反复出现提 issue（「下载电脑版」类已知弹窗 CLI 已能自动关闭） |
 | `SEND_FAILED` | 发送失败 | 重试一次 |
 | `INJECT_MISMATCH` | 注入到输入框的内容与预期长度偏差 > 10%（可能残留旧文本） | 检查是否清空失败；重试一次，仍失败按 `SITE_CHANGED` |
 | `STREAM_STALLED` | 流式停滞 / 超时 | 标注「可能截断」；生成类任务可给更长超时后重试 |
@@ -518,6 +519,11 @@ Linux    $XDG_STATE_HOME/doubao-brain/   （该变量未设置时通常为 ~/.lo
     - 抹除 `navigator.webdriver`
 
 12. **`--thread new` 不能只靠 goto 首页**：首页会恢复上次会话，必须显式点「新对话」按钮。
+13. **首屏弹窗会拦截点击（Esc 无效）**：radix 促销弹窗（如 2026-09-12 的「下载电脑版」，
+    `data-slot="dialog-content"` + 全屏 overlay）盖住整页时，`editor.click()` 被 overlay 拦截直到超时
+    （报错形如 "subtree intercepts pointer events"，最终归为 `INTERNAL_ERROR`）；键盘 **Esc 关不掉**。
+    现行方案：`dismissBlockingDialogs()` 只点**白名单关闭控件**（`aria-label="关闭"` 或
+    「下次提醒我」类文案，多层弹窗逐层关），未命中白名单则报 `POPUP_BLOCKING`、绝不瞎点。
 
 ### 站点改版了怎么办
 

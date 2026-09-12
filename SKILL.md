@@ -4,7 +4,7 @@ description: 把豆包网页版（多模型可选、联网搜索、图像生成�
 license: MIT
 allowed-tools: Bash, Read, Write
 metadata:
-  version: 3.0.0
+  version: 3.0.1
   emoji: "🫘"
   requires: node>=20, network to doubao.com, Doubao account
 ---

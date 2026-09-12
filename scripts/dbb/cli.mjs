@@ -385,6 +385,14 @@ async function cmdAsk() {
     if (!ck.loggedIn) return fail("LOGIN_REQUIRED", "需要登录：请运行 dbb login 完成人工登录。", { state: st });
     if (st.rateLimited) return fail("RATE_LIMITED", "豆包 提示请求过于频繁，请稍后再试。", { retryAfterMs: 300000 });
 
+    // 首屏弹窗（如「下载电脑版」促销）会盖住整页拦截点击 —— 只点白名单关闭控件（Esc 无效，2026-09-12 实测）。
+    // 关不掉时 dismissBlockingDialogs 已自动截图到 debug/popup-blocking-<ts>.png，随失败输出带上路径。
+    const dlg = await site.dismissBlockingDialogs(page);
+    if (dlg.found) log("info", `首屏弹窗: ${JSON.stringify(dlg)}`);
+    if (dlg.remaining > 0) {
+      return fail("POPUP_BLOCKING", "页面弹窗无法自动关闭（未命中白名单关闭控件），请人工查看截图或浏览器窗口后重试。", { dialogs: dlg });
+    }
+
     let threadLost = false;
     if (!st.hasEditor) {
       if (targetUrl !== site.SITE_URL) {
@@ -687,7 +695,7 @@ function cmdSession() {
   try {
     return emit({ ok: true, ...setSession(patch, wsid) });
   } catch (error) {
-    return fail(error.code ?? "INTERNAL_ERROR", error.message);
+    return fail(error.code ?? "INTERNAL_ERROR", error.message, error.screenshot ? { screenshot: error.screenshot } : undefined);
   }
 }
 
